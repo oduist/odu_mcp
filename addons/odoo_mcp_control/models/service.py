@@ -792,12 +792,15 @@ class OdooMcpService(models.AbstractModel):
     @api.model
     def _business_env(self, credential):
         company_ids = credential.profile_id._allowed_company_ids(credential.user_id)
-        env = self.env(user=credential.user_id.id, su=False).with_context(
-            allowed_company_ids=company_ids,
+        context = {
+            **self.env.context,
+            "allowed_company_ids": company_ids,
+        }
+        return self.env(
+            user=credential.user_id.id,
+            su=False,
+            context=context,
         )
-        if env.company.id not in company_ids:
-            env = env.with_company(env["res.company"].browse(company_ids[0]))
-        return env
 
     @api.model
     def _model_policy(self, credential, model_name, operation):

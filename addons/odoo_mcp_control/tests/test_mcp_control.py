@@ -52,7 +52,7 @@ class TestMcpControl(TransactionCase):
             {
                 "name": "Test connector",
                 "profile_id": cls.profile.id,
-                "user_id": cls.env.user.id,
+                "user_id": cls.env.ref("base.user_admin").id,
             }
         )
         cls.token = cls.credential._generate_secret()
