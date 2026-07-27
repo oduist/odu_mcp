@@ -302,12 +302,22 @@ class OdooMcpMethodPolicy(models.Model):
         required=True,
         default="high",
     )
-    approval_required = fields.Boolean(default=True)
     max_record_count = fields.Integer(default=1, required=True)
-    argument_schema_json = fields.Text(
-        default="{}",
+    allow_model_method = fields.Boolean(
+        default=False,
+        help="Allow calling the method without record IDs.",
+    )
+    allow_positional_arguments = fields.Boolean(
+        default=False,
+        help="Allow positional arguments after the recordset.",
+    )
+    allowed_keyword_arguments = fields.Char(
+        help="Comma-separated exact keyword argument names. Empty forbids kwargs.",
+    )
+    max_argument_bytes = fields.Integer(
+        default=8192,
         required=True,
-        help="Reserved JSON Schema for method arguments.",
+        help="Maximum canonical JSON size of args and kwargs.",
     )
 
     _profile_model_method_unique = models.Constraint(
@@ -315,8 +325,9 @@ class OdooMcpMethodPolicy(models.Model):
         "A method can occur only once per model and MCP profile.",
     )
     _positive_max_record_count = models.Constraint(
-        "CHECK(max_record_count > 0 AND max_record_count <= 100)",
-        "Method record count must be between 1 and 100.",
+        "CHECK(max_record_count > 0 AND max_record_count <= 100 "
+        "AND max_argument_bytes >= 256 AND max_argument_bytes <= 65536)",
+        "Method record or argument limits are outside their allowed range.",
     )
 
     @api.constrains("method_name")
@@ -328,12 +339,23 @@ class OdooMcpMethodPolicy(models.Model):
             ):
                 raise ValidationError(_("Only explicit public method names may be allowed."))
 
-    @api.constrains("argument_schema_json")
-    def _check_argument_schema_json(self):
+    @api.constrains("allowed_keyword_arguments")
+    def _check_allowed_keyword_arguments(self):
         for policy in self:
-            try:
-                value = json.loads(policy.argument_schema_json or "{}")
-                if not isinstance(value, dict):
-                    raise ValueError
-            except (TypeError, ValueError, json.JSONDecodeError) as exc:
-                raise ValidationError(_("Method argument schema must be a JSON object.")) from exc
+            invalid = [
+                name
+                for name in policy._allowed_keyword_names()
+                if not METHOD_NAME_RE.fullmatch(name)
+            ]
+            if invalid:
+                raise ValidationError(
+                    _("Allowed keyword arguments must be valid Python identifiers.")
+                )
+
+    def _allowed_keyword_names(self):
+        self.ensure_one()
+        return {
+            name.strip()
+            for name in (self.allowed_keyword_arguments or "").split(",")
+            if name.strip()
+        }

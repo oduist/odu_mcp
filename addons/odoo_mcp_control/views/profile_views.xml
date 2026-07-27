@@ -100,7 +100,6 @@
                                     <field name="model_id"/>
                                     <field name="method_name"/>
                                     <field name="risk_level"/>
-                                    <field name="approval_required"/>
                                     <field name="max_record_count"/>
                                 </list>
                                 <form>
@@ -110,9 +109,11 @@
                                         <field name="model_id"/>
                                         <field name="method_name"/>
                                         <field name="risk_level"/>
-                                        <field name="approval_required"/>
                                         <field name="max_record_count"/>
-                                        <field name="argument_schema_json"/>
+                                        <field name="allow_model_method"/>
+                                        <field name="allow_positional_arguments"/>
+                                        <field name="allowed_keyword_arguments"/>
+                                        <field name="max_argument_bytes"/>
                                     </group>
                                 </form>
                             </field>

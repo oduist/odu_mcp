@@ -95,10 +95,12 @@
 - `profile_id`, `model_id`, `method_name`, уникальная тройка;
 - `active`;
 - `risk_level`: low/medium/high/critical;
-- `approval_required`, default true;
 - `max_record_count`;
+- model-level calls disabled by default;
+- positional arguments disabled by default;
+- exact allowlist of keyword arguments and canonical JSON size limit;
 - public method only; имя с `_` запрещено;
-- optional JSON Schema для args/kwargs в будущей совместимости; версия 1 валидирует тип контейнеров и лимиты.
+- все method calls проходят общий approval workflow.
 
 ### `odoo.mcp.credential`
 
@@ -242,6 +244,8 @@ X-Request-ID: UUID
 - Запрещены magic/system fields и неизвестные поля.
 - Odoo create/write access проверяется обычным user environment.
 - Multi-company context ограничен пересечением profile companies и user companies.
+- После create/write forced domain проверяется повторно; выход записи из scope
+  откатывает всю mutation.
 
 ### Delete
 

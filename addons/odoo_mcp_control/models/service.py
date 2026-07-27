@@ -707,6 +707,34 @@ class OdooMcpService(models.AbstractModel):
         kwargs = payload.get("kwargs", {})
         if not isinstance(args, list) or not isinstance(kwargs, dict):
             raise McpServiceError("invalid_arguments", _("Method args must be a list and kwargs an object."))
+        if not ids and not method_policy.allow_model_method:
+            raise McpServiceError(
+                "policy_denied",
+                _("This method policy requires explicit record IDs."),
+                status=403,
+            )
+        if args and not method_policy.allow_positional_arguments:
+            raise McpServiceError(
+                "policy_denied",
+                _("Positional arguments are not allowed by the method policy."),
+                status=403,
+            )
+        denied_kwargs = set(kwargs) - method_policy._allowed_keyword_names()
+        if denied_kwargs:
+            raise McpServiceError(
+                "policy_denied",
+                _("One or more keyword arguments are not allowed by the method policy."),
+                status=403,
+            )
+        argument_size = len(
+            self._canonical_json({"args": args, "kwargs": kwargs}).encode()
+        )
+        if argument_size > method_policy.max_argument_bytes:
+            raise McpServiceError(
+                "payload_too_large",
+                _("Method arguments exceed the configured limit."),
+                status=413,
+            )
         normalized = {
             "model": model_name,
             "ids": ids,
@@ -726,13 +754,15 @@ class OdooMcpService(models.AbstractModel):
         normalized, _preview = self._prepare_action(credential, action, payload)
         model_name = normalized["model"]
         if action == "record.create":
-            Model, _policy = self._model_policy(credential, model_name, "create")
+            Model, policy = self._model_policy(credential, model_name, "create")
             records = Model.create(normalized["values"])
+            self._enforce_forced_domain_postcondition(records, policy)
             return {"model": model_name, "ids": records.ids, "count": len(records)}
         if action == "record.update":
             Model, policy = self._model_policy(credential, model_name, "write")
             records = self._records_in_policy(Model, policy, normalized["ids"], "write")
             records.write(normalized["values"])
+            self._enforce_forced_domain_postcondition(records, policy)
             return {"model": model_name, "ids": records.ids, "count": len(records)}
         if action == "record.delete":
             Model, policy = self._model_policy(credential, model_name, "unlink")
@@ -851,6 +881,16 @@ class OdooMcpService(models.AbstractModel):
             )
         records.check_access(operation)
         return records
+
+    @api.model
+    def _enforce_forced_domain_postcondition(self, records, policy):
+        allowed = records.filtered_domain(policy._forced_domain())
+        if set(allowed.ids) != set(records.ids):
+            raise McpServiceError(
+                "policy_postcondition_failed",
+                _("The change would move one or more records outside the allowed scope."),
+                status=403,
+            )
 
     @api.model
     def _read_fields(self, policy, Model, requested):

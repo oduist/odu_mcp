@@ -47,6 +47,14 @@ class OdooMcpController(http.Controller):
     )
     def capabilities(self):
         request_id = self._request_id()
+        if not self._enabled():
+            return self._error(
+                request_id,
+                "service_disabled",
+                "The MCP connector API is disabled.",
+                503,
+                retryable=True,
+            )
         credential, response = self._authenticate(request_id)
         if response:
             return response

@@ -1,6 +1,6 @@
 import json
 
-from odoo import Command
+from odoo import Command, fields
 from odoo.exceptions import AccessError
 from odoo.tests import tagged
 from odoo.tests.common import TransactionCase
@@ -67,6 +67,13 @@ class TestMcpControl(TransactionCase):
             remote_ip="127.0.0.1",
             user_agent="odoo-test",
         )
+
+    def _approve(self, approval_id):
+        approval = self.env["odoo.mcp.approval"].search(
+            [("request_uid", "=", approval_id)]
+        )
+        approval.action_approve()
+        return approval
 
     def test_credential_authentication_and_ip_allowlist(self):
         credential, error = self.env["odoo.mcp.credential"]._authenticate(
@@ -255,3 +262,121 @@ class TestMcpControl(TransactionCase):
         )
         self.assertFalse(credential)
         self.assertEqual(error, "invalid_credential")
+
+    def test_expired_credential(self):
+        expired_at = fields.Datetime.subtract(fields.Datetime.now(), seconds=1)
+        self.env.cr.execute(
+            "UPDATE odoo_mcp_credential SET expires_at = %s WHERE id = %s",
+            [expired_at, self.credential.id],
+        )
+        self.credential.invalidate_recordset(["expires_at"])
+
+        credential, error = self.env["odoo.mcp.credential"]._authenticate(
+            self.token,
+            "127.0.0.1",
+        )
+
+        self.assertFalse(credential)
+        self.assertEqual(error, "expired_credential")
+
+    def test_rate_limit_is_enforced_per_credential(self):
+        self.profile.rate_limit_per_minute = 1
+        first, first_status = self._request("system.info")
+        second, second_status = self._request("system.info")
+
+        self.assertEqual(first_status, 200)
+        self.assertTrue(first["ok"])
+        self.assertEqual(second_status, 429)
+        self.assertEqual(second["error"]["code"], "rate_limit_exceeded")
+
+    def test_create_cannot_escape_forced_domain(self):
+        body, status = self._request(
+            "changes.preview",
+            {
+                "action": "record.create",
+                "payload": {
+                    "model": "res.partner",
+                    "values": {"name": "Outside MCP scope"},
+                },
+                "idempotency_key": "create-outside-scope",
+            },
+        )
+        self.assertEqual(status, 200)
+        approval = self._approve(body["data"]["approval_id"])
+
+        body, status = self._request(
+            "changes.execute",
+            {"approval_id": approval.request_uid},
+        )
+
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"]["code"], "policy_postcondition_failed")
+        self.assertFalse(
+            self.env["res.partner"].search([("name", "=", "Outside MCP scope")])
+        )
+
+    def test_update_cannot_move_record_outside_forced_domain(self):
+        self.policy.forced_domain_json = json.dumps([["name", "ilike", "Allowed"]])
+        body, status = self._request(
+            "changes.preview",
+            {
+                "action": "record.update",
+                "payload": {
+                    "model": "res.partner",
+                    "ids": [self.allowed_partner.id],
+                    "values": {"name": "Escaped scope"},
+                },
+                "idempotency_key": "update-outside-scope",
+            },
+        )
+        self.assertEqual(status, 200)
+        approval = self._approve(body["data"]["approval_id"])
+
+        body, status = self._request(
+            "changes.execute",
+            {"approval_id": approval.request_uid},
+        )
+
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"]["code"], "policy_postcondition_failed")
+        self.assertEqual(self.allowed_partner.name, "Allowed Partner")
+
+    def test_method_policy_rejects_unapproved_argument_shapes(self):
+        self.env["odoo.mcp.method.policy"].create(
+            {
+                "profile_id": self.profile.id,
+                "model_id": self.policy.model_id.id,
+                "method_name": "toggle_active",
+                "max_record_count": 1,
+            }
+        )
+        denied, denied_status = self._request(
+            "changes.preview",
+            {
+                "action": "method.call",
+                "payload": {
+                    "model": "res.partner",
+                    "ids": [self.allowed_partner.id],
+                    "method": "toggle_active",
+                    "args": ["unexpected"],
+                },
+                "idempotency_key": "method-denied-args",
+            },
+        )
+        allowed, allowed_status = self._request(
+            "changes.preview",
+            {
+                "action": "method.call",
+                "payload": {
+                    "model": "res.partner",
+                    "ids": [self.allowed_partner.id],
+                    "method": "toggle_active",
+                },
+                "idempotency_key": "method-allowed-noargs",
+            },
+        )
+
+        self.assertEqual(denied_status, 403)
+        self.assertEqual(denied["error"]["code"], "policy_denied")
+        self.assertEqual(allowed_status, 200)
+        self.assertEqual(allowed["data"]["state"], "pending")
