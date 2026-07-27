@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <menuitem id="menu_mcp_root"
+              name="MCP Control"
+              sequence="560"
+              groups="odoo_mcp_control.group_mcp_auditor"/>
+
+    <menuitem id="menu_mcp_approvals"
+              name="Approval Inbox"
+              parent="menu_mcp_root"
+              action="action_odoo_mcp_approvals"
+              sequence="10"
+              groups="odoo_mcp_control.group_mcp_auditor"/>
+
+    <menuitem id="menu_mcp_profiles"
+              name="Security Profiles"
+              parent="menu_mcp_root"
+              action="action_odoo_mcp_profiles"
+              sequence="20"
+              groups="odoo_mcp_control.group_mcp_auditor"/>
+
+    <menuitem id="menu_mcp_credentials"
+              name="Connector Credentials"
+              parent="menu_mcp_root"
+              action="action_odoo_mcp_credentials"
+              sequence="30"
+              groups="odoo_mcp_control.group_mcp_auditor"/>
+
+    <menuitem id="menu_mcp_audit"
+              name="Audit Log"
+              parent="menu_mcp_root"
+              action="action_odoo_mcp_audit"
+              sequence="40"
+              groups="odoo_mcp_control.group_mcp_auditor"/>
+</odoo>

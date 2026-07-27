@@ -1,0 +1,22 @@
+services:
+  odoo-agent-mcp:
+    build: .
+    restart: unless-stopped
+    environment:
+      ODOO_MCP_ODOO_URL: ${ODOO_MCP_ODOO_URL}
+      ODOO_MCP_CONNECTOR_TOKEN: ${ODOO_MCP_CONNECTOR_TOKEN}
+      ODOO_MCP_TRANSPORT: streamable-http
+      ODOO_MCP_HOST: 0.0.0.0
+      ODOO_MCP_PORT: 8000
+      ODOO_MCP_AUTH_MODE: static-token
+      ODOO_MCP_STATIC_TOKENS: ${ODOO_MCP_STATIC_TOKENS}
+      ODOO_MCP_TOOL_GROUPS: ${ODOO_MCP_TOOL_GROUPS:-core}
+    ports:
+      - "127.0.0.1:8000:8000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_res_config_settings_mcp_control" model="ir.ui.view">
+        <field name="name">res.config.settings.view.form.mcp.control</field>
+        <field name="model">res.config.settings</field>
+        <field name="inherit_id" ref="base.res_config_settings_view_form"/>
+        <field name="priority" eval="90"/>
+        <field name="arch" type="xml">
+            <xpath expr="//form" position="inside">
+                <app data-string="MCP Control"
+                     string="MCP Control"
+                     name="odoo_mcp_control"
+                     groups="base.group_system">
+                    <block title="Connector API" name="mcp_connector_api">
+                        <setting id="mcp_enabled"
+                                 string="Enable connector API"
+                                 help="Disable all authenticated connector operations without deleting credentials.">
+                            <field name="odoo_mcp_enabled"/>
+                        </setting>
+                        <setting id="mcp_payload_limit"
+                                 string="Request and response limit"
+                                 help="Maximum JSON request and response size in bytes.">
+                            <field name="odoo_mcp_max_payload_bytes"/>
+                        </setting>
+                        <setting id="mcp_binary_limit"
+                                 string="Binary and report limit"
+                                 help="Maximum decoded attachment or rendered report size in bytes.">
+                            <field name="odoo_mcp_max_binary_bytes"/>
+                        </setting>
+                    </block>
+                    <block title="Retention" name="mcp_retention">
+                        <setting id="mcp_audit_retention" string="Audit retention">
+                            <field name="odoo_mcp_audit_retention_days"/>
+                        </setting>
+                        <setting id="mcp_approval_retention" string="Approval retention">
+                            <field name="odoo_mcp_approval_retention_days"/>
+                        </setting>
+                    </block>
+                </app>
+            </xpath>
+        </field>
+    </record>
+</odoo>
