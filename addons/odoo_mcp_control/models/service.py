@@ -50,7 +50,7 @@ class OdooMcpService(models.AbstractModel):
     @api.model
     def execute_request(
         self,
-        credential,
+        access,
         operation,
         params,
         request_id,
@@ -69,7 +69,7 @@ class OdooMcpService(models.AbstractModel):
         approval = self.env["odoo.mcp.approval"]
 
         try:
-            quota_error = credential._check_quota()
+            quota_error = access._check_quota()
             if quota_error:
                 raise McpServiceError(
                     quota_error,
@@ -78,14 +78,14 @@ class OdooMcpService(models.AbstractModel):
                     retryable=True,
                 )
             with self.env.cr.savepoint():
-                data = self._dispatch(credential, operation, params)
+                data = self._dispatch(access, operation, params)
             if isinstance(data, dict) and data.get("approval_id"):
                 approval = (
                     self.env["odoo.mcp.approval"]
                     .sudo()
                     .search(
                         [
-                            ("credential_id", "=", credential.id),
+                            ("access_id", "=", access.id),
                             ("request_uid", "=", data["approval_id"]),
                         ],
                         limit=1,
@@ -96,7 +96,7 @@ class OdooMcpService(models.AbstractModel):
                 "request_id": request_id,
                 "data": self._json_safe(data),
                 "meta": {
-                    "profile": credential.profile_id.code,
+                    "profile": access.profile_id.code,
                     "duration_ms": int((time.monotonic() - started) * 1000),
                 },
             }
@@ -141,7 +141,7 @@ class OdooMcpService(models.AbstractModel):
         model_name = params.get("model") if isinstance(params.get("model"), str) else False
         target_ids = self._safe_target_ids(params.get("ids") or params.get("id"))
         self._audit(
-            credential,
+            access,
             request_id=request_id,
             operation=operation or "invalid",
             model_name=model_name,
@@ -157,11 +157,11 @@ class OdooMcpService(models.AbstractModel):
             user_agent=user_agent,
             approval=approval,
         )
-        credential._record_use(status < 400)
+        access._record_use(status < 400)
         return body, status
 
     @api.model
-    def _dispatch(self, credential, operation, params):
+    def _dispatch(self, access, operation, params):
         handlers = {
             "capabilities": self._op_capabilities,
             "system.info": self._op_system_info,
@@ -181,31 +181,31 @@ class OdooMcpService(models.AbstractModel):
         handler = handlers.get(operation)
         if not handler:
             raise McpServiceError("unknown_operation", _("Unknown connector operation."), status=404)
-        return handler(credential, params)
+        return handler(access, params)
 
     @api.model
-    def _op_capabilities(self, credential, params):
-        return credential.profile_id._capabilities()
+    def _op_capabilities(self, access, params):
+        return access.profile_id._capabilities()
 
     @api.model
-    def _op_system_info(self, credential, params):
-        user_env = self._business_env(credential)
+    def _op_system_info(self, access, params):
+        user_env = self._business_env(access)
         user = user_env.user
         return {
             "odoo_version": release.version,
-            "module_version": "19.0.1.0.0",
-            "profile": credential.profile_id.code,
+            "module_version": "19.0.2.0.0",
+            "profile": access.profile_id.code,
             "user": {"id": user.id, "name": user.name, "login": user.login},
             "companies": [
                 {"id": company.id, "name": company.name}
                 for company in user_env["res.company"].browse(user_env.context["allowed_company_ids"])
             ],
-            "capabilities": credential.profile_id._capabilities()["features"],
+            "capabilities": access.profile_id._capabilities()["features"],
         }
 
     @api.model
-    def _op_whoami(self, credential, params):
-        user_env = self._business_env(credential)
+    def _op_whoami(self, access, params):
+        user_env = self._business_env(access)
         user = user_env.user
         return {
             "id": user.id,
@@ -218,14 +218,14 @@ class OdooMcpService(models.AbstractModel):
                 {"id": company.id, "name": company.name}
                 for company in user_env["res.company"].browse(user_env.context["allowed_company_ids"])
             ],
-            "profile": credential.profile_id.code,
+            "profile": access.profile_id.code,
         }
 
     @api.model
-    def _op_models_list(self, credential, params):
-        user_env = self._business_env(credential)
+    def _op_models_list(self, access, params):
+        user_env = self._business_env(access)
         result = []
-        for policy in credential.profile_id.policy_ids.filtered("active").sorted(
+        for policy in access.profile_id.policy_ids.filtered("active").sorted(
             key=lambda item: item.model_id.model
         ):
             model_name = policy.model_id.model
@@ -249,11 +249,11 @@ class OdooMcpService(models.AbstractModel):
         return {"models": result, "count": len(result)}
 
     @api.model
-    def _op_models_describe(self, credential, params):
-        if not credential.profile_id.allow_schema:
+    def _op_models_describe(self, access, params):
+        if not access.profile_id.allow_schema:
             raise McpServiceError("policy_denied", _("Schema access is disabled."), status=403)
         model_name = self._model_name(params)
-        Model, policy = self._model_policy(credential, model_name, "read")
+        Model, policy = self._model_policy(access, model_name, "read")
         allowed = policy._allowed_field_names("read", Model)
         descriptions = Model.fields_get(
             allfields=sorted(allowed),
@@ -279,9 +279,9 @@ class OdooMcpService(models.AbstractModel):
         }
 
     @api.model
-    def _op_records_search(self, credential, params):
+    def _op_records_search(self, access, params):
         model_name = self._model_name(params)
-        Model, policy = self._model_policy(credential, model_name, "read")
+        Model, policy = self._model_policy(access, model_name, "read")
         fields_list = self._read_fields(policy, Model, params.get("fields"))
         domain = self._combined_domain(policy, params.get("domain", []))
         limit = self._limit(policy, params.get("limit"))
@@ -302,26 +302,26 @@ class OdooMcpService(models.AbstractModel):
         }
 
     @api.model
-    def _op_records_read(self, credential, params):
+    def _op_records_read(self, access, params):
         model_name = self._model_name(params)
-        Model, policy = self._model_policy(credential, model_name, "read")
+        Model, policy = self._model_policy(access, model_name, "read")
         ids = self._parse_ids(params.get("ids"), max_count=policy._record_limit())
         fields_list = self._read_fields(policy, Model, params.get("fields"))
         records = self._records_in_policy(Model, policy, ids, "read")
         return {"model": model_name, "records": records.read(fields_list)}
 
     @api.model
-    def _op_records_count(self, credential, params):
+    def _op_records_count(self, access, params):
         model_name = self._model_name(params)
-        Model, policy = self._model_policy(credential, model_name, "read")
+        Model, policy = self._model_policy(access, model_name, "read")
         domain = self._combined_domain(policy, params.get("domain", []))
         return {"model": model_name, "count": Model.search_count(domain)}
 
     @api.model
-    def _op_records_aggregate(self, credential, params):
+    def _op_records_aggregate(self, access, params):
         model_name = self._model_name(params)
-        Model, policy = self._model_policy(credential, model_name, "aggregate")
-        if not credential.profile_id.allow_aggregate:
+        Model, policy = self._model_policy(access, model_name, "aggregate")
+        if not access.profile_id.allow_aggregate:
             raise McpServiceError("policy_denied", _("Aggregation is disabled."), status=403)
         fields_list = params.get("fields") or []
         groupby = params.get("groupby") or []
@@ -355,17 +355,17 @@ class OdooMcpService(models.AbstractModel):
         return {"model": model_name, "groups": rows, "limit": limit}
 
     @api.model
-    def _op_attachment_read(self, credential, params):
-        profile = credential.profile_id
+    def _op_attachment_read(self, access, params):
+        profile = access.profile_id
         if not profile.allow_attachments:
             raise McpServiceError("policy_denied", _("Attachment access is disabled."), status=403)
         attachment_id = self._positive_int(params.get("attachment_id"), "attachment_id")
-        user_env = self._business_env(credential)
+        user_env = self._business_env(access)
         attachment = user_env["ir.attachment"].browse(attachment_id)
         attachment.check_access("read")
         if not attachment.exists() or not attachment.res_model or not attachment.res_id:
             raise McpServiceError("not_found", _("Attachment was not found."), status=404)
-        Model, policy = self._model_policy(credential, attachment.res_model, "read")
+        Model, policy = self._model_policy(access, attachment.res_model, "read")
         self._records_in_policy(Model, policy, [attachment.res_id], "read")
         data = attachment.datas or b""
         if isinstance(data, bytes):
@@ -384,17 +384,17 @@ class OdooMcpService(models.AbstractModel):
         }
 
     @api.model
-    def _op_report_render(self, credential, params):
-        if not credential.profile_id.allow_reports:
+    def _op_report_render(self, access, params):
+        if not access.profile_id.allow_reports:
             raise McpServiceError("policy_denied", _("Report rendering is disabled."), status=403)
         report_ref = params.get("report")
         if not isinstance(report_ref, str) or "." not in report_ref:
             raise McpServiceError("invalid_report", _("A report XML ID is required."))
-        user_env = self._business_env(credential)
+        user_env = self._business_env(access)
         report = user_env.ref(report_ref, raise_if_not_found=False)
         if not report or report._name != "ir.actions.report":
             raise McpServiceError("not_found", _("Report was not found."), status=404)
-        Model, policy = self._model_policy(credential, report.model, "read")
+        Model, policy = self._model_policy(access, report.model, "read")
         ids = self._parse_ids(params.get("ids"), max_count=min(20, policy._record_limit()))
         records = self._records_in_policy(Model, policy, ids, "read")
         content, content_type = user_env["ir.actions.report"]._render_qweb_pdf(
@@ -411,7 +411,7 @@ class OdooMcpService(models.AbstractModel):
         }
 
     @api.model
-    def _op_change_preview(self, credential, params):
+    def _op_change_preview(self, access, params):
         action = params.get("action")
         payload = params.get("payload")
         idempotency_key = params.get("idempotency_key")
@@ -422,13 +422,13 @@ class OdooMcpService(models.AbstractModel):
                 "invalid_idempotency_key",
                 _("An idempotency key between 8 and 128 characters is required."),
             )
-        normalized, preview = self._prepare_action(credential, action, payload)
+        normalized, preview = self._prepare_action(access, action, payload)
         payload_json = self.env["odoo.mcp.approval"]._canonical_payload(normalized)
         payload_hash = self.env["odoo.mcp.approval"]._payload_digest(payload_json)
         Approval = self.env["odoo.mcp.approval"].sudo()
         existing = Approval.search(
             [
-                ("credential_id", "=", credential.id),
+                ("access_id", "=", access.id),
                 ("idempotency_key", "=", idempotency_key),
             ],
             limit=1,
@@ -444,14 +444,14 @@ class OdooMcpService(models.AbstractModel):
 
         risk = preview["risk_level"]
         auto_approved = (
-            credential.profile_id.auto_approve_low_risk
+            access.profile_id.auto_approve_low_risk
             and risk == "low"
             and action in {"message.post", "activity.schedule"}
         )
         now = fields.Datetime.now()
         approval = Approval.create(
             {
-                "credential_id": credential.id,
+                "access_id": access.id,
                 "action": action,
                 "model_name": normalized["model"],
                 "payload_json": payload_json,
@@ -464,7 +464,7 @@ class OdooMcpService(models.AbstractModel):
                 "state": "approved" if auto_approved else "pending",
                 "expires_at": fields.Datetime.add(
                     now,
-                    minutes=credential.profile_id.approval_ttl_minutes,
+                    minutes=access.profile_id.approval_ttl_minutes,
                 ),
                 "approved_at": now if auto_approved else False,
             }
@@ -472,15 +472,15 @@ class OdooMcpService(models.AbstractModel):
         return approval._public_dict()
 
     @api.model
-    def _op_change_status(self, credential, params):
-        approval = self._approval_for_credential(credential, params.get("approval_id"))
+    def _op_change_status(self, access, params):
+        approval = self._approval_for_access(access, params.get("approval_id"))
         if approval.state in {"pending", "approved"} and approval.expires_at <= fields.Datetime.now():
             approval._system_write({"state": "expired"})
         return approval._public_dict()
 
     @api.model
-    def _op_change_execute(self, credential, params):
-        approval = self._approval_for_credential(credential, params.get("approval_id"))
+    def _op_change_execute(self, access, params):
+        approval = self._approval_for_access(access, params.get("approval_id"))
         approval.lock_for_update()
         if approval.state == "executed":
             return approval._public_dict()
@@ -499,7 +499,7 @@ class OdooMcpService(models.AbstractModel):
         try:
             with self.env.cr.savepoint():
                 payload = json.loads(payload_json)
-                result = self._execute_action(credential, approval.action, payload)
+                result = self._execute_action(access, approval.action, payload)
             approval._system_write(
                 {
                     "state": "executed",
@@ -508,13 +508,31 @@ class OdooMcpService(models.AbstractModel):
                     "error_message": False,
                 }
             )
+            self._publish_execution_updates(access, result)
         except Exception as exc:
             approval._system_write({"state": "failed", "error_message": str(exc)[:1000]})
             raise
         return approval._public_dict()
 
     @api.model
-    def _prepare_action(self, credential, action, payload):
+    def _publish_execution_updates(self, access, result):
+        if not isinstance(result, dict):
+            return
+        model_name = result.get("model")
+        if not isinstance(model_name, str):
+            return
+        record_ids = result.get("ids")
+        if not isinstance(record_ids, list):
+            record_id = result.get("id")
+            record_ids = [record_id] if isinstance(record_id, int) else []
+        for record_id in record_ids:
+            if isinstance(record_id, int) and record_id > 0:
+                access._publish_resource_update(
+                    f"odoo://record/{model_name}/{record_id}"
+                )
+
+    @api.model
+    def _prepare_action(self, access, action, payload):
         handlers = {
             "record.create": self._prepare_create,
             "record.update": self._prepare_update,
@@ -527,17 +545,17 @@ class OdooMcpService(models.AbstractModel):
         handler = handlers.get(action)
         if not handler:
             raise McpServiceError("unknown_action", _("Unknown change action."), status=404)
-        return handler(credential, payload)
+        return handler(access, payload)
 
     @api.model
-    def _prepare_create(self, credential, payload):
+    def _prepare_create(self, access, payload):
         model_name = self._model_name(payload)
-        Model, policy = self._model_policy(credential, model_name, "create")
+        Model, policy = self._model_policy(access, model_name, "create")
         values_list = payload.get("values")
         values_list = values_list if isinstance(values_list, list) else [values_list]
         if not values_list or not all(isinstance(values, dict) for values in values_list):
             raise McpServiceError("invalid_values", _("Create values must be an object or list of objects."))
-        if len(values_list) > credential.profile_id.max_batch_size:
+        if len(values_list) > access.profile_id.max_batch_size:
             raise McpServiceError("batch_too_large", _("Create batch exceeds the profile limit."), status=413)
         Model.browse().check_access("create")
         normalized_values = [
@@ -556,10 +574,10 @@ class OdooMcpService(models.AbstractModel):
         }
 
     @api.model
-    def _prepare_update(self, credential, payload):
+    def _prepare_update(self, access, payload):
         model_name = self._model_name(payload)
-        Model, policy = self._model_policy(credential, model_name, "write")
-        ids = self._parse_ids(payload.get("ids"), max_count=credential.profile_id.max_batch_size)
+        Model, policy = self._model_policy(access, model_name, "write")
+        ids = self._parse_ids(payload.get("ids"), max_count=access.profile_id.max_batch_size)
         values = self._write_values(policy, Model, payload.get("values"), "write")
         records = self._records_in_policy(Model, policy, ids, "write")
         old_rows = {row["id"]: row for row in records.read(list(values))}
@@ -581,10 +599,10 @@ class OdooMcpService(models.AbstractModel):
         }
 
     @api.model
-    def _prepare_delete(self, credential, payload):
+    def _prepare_delete(self, access, payload):
         model_name = self._model_name(payload)
-        Model, policy = self._model_policy(credential, model_name, "unlink")
-        ids = self._parse_ids(payload.get("ids"), max_count=credential.profile_id.max_batch_size)
+        Model, policy = self._model_policy(access, model_name, "unlink")
+        ids = self._parse_ids(payload.get("ids"), max_count=access.profile_id.max_batch_size)
         records = self._records_in_policy(Model, policy, ids, "unlink")
         normalized = {"model": model_name, "ids": records.ids}
         return normalized, {
@@ -595,11 +613,11 @@ class OdooMcpService(models.AbstractModel):
         }
 
     @api.model
-    def _prepare_message(self, credential, payload):
-        if not credential.profile_id.allow_chatter:
+    def _prepare_message(self, access, payload):
+        if not access.profile_id.allow_chatter:
             raise McpServiceError("policy_denied", _("Chatter actions are disabled."), status=403)
         model_name = self._model_name(payload)
-        Model, policy = self._model_policy(credential, model_name, "write")
+        Model, policy = self._model_policy(access, model_name, "write")
         record_id = self._positive_int(payload.get("id"), "id")
         record = self._records_in_policy(Model, policy, [record_id], "write")
         if not hasattr(record, "message_post"):
@@ -616,11 +634,11 @@ class OdooMcpService(models.AbstractModel):
         }
 
     @api.model
-    def _prepare_activity(self, credential, payload):
-        if not credential.profile_id.allow_activities:
+    def _prepare_activity(self, access, payload):
+        if not access.profile_id.allow_activities:
             raise McpServiceError("policy_denied", _("Activity actions are disabled."), status=403)
         model_name = self._model_name(payload)
-        Model, policy = self._model_policy(credential, model_name, "write")
+        Model, policy = self._model_policy(access, model_name, "write")
         record_id = self._positive_int(payload.get("id"), "id")
         record = self._records_in_policy(Model, policy, [record_id], "write")
         if not hasattr(record, "activity_schedule"):
@@ -649,11 +667,11 @@ class OdooMcpService(models.AbstractModel):
         }
 
     @api.model
-    def _prepare_attachment(self, credential, payload):
-        if not credential.profile_id.allow_attachments:
+    def _prepare_attachment(self, access, payload):
+        if not access.profile_id.allow_attachments:
             raise McpServiceError("policy_denied", _("Attachment actions are disabled."), status=403)
         model_name = self._model_name(payload)
-        Model, policy = self._model_policy(credential, model_name, "write")
+        Model, policy = self._model_policy(access, model_name, "write")
         record_id = self._positive_int(payload.get("id"), "id")
         record = self._records_in_policy(Model, policy, [record_id], "write")
         name = payload.get("name")
@@ -680,12 +698,12 @@ class OdooMcpService(models.AbstractModel):
         }
 
     @api.model
-    def _prepare_method(self, credential, payload):
+    def _prepare_method(self, access, payload):
         model_name = self._model_name(payload)
         method_name = payload.get("method")
         if not isinstance(method_name, str) or method_name.startswith("_"):
             raise McpServiceError("policy_denied", _("Private or invalid methods are forbidden."), status=403)
-        method_policy = credential.profile_id.method_policy_ids.filtered(
+        method_policy = access.profile_id.method_policy_ids.filtered(
             lambda policy: (
                 policy.active
                 and policy.model_id.model == model_name
@@ -694,7 +712,7 @@ class OdooMcpService(models.AbstractModel):
         )[:1]
         if not method_policy:
             raise McpServiceError("policy_denied", _("Method is not explicitly allowed."), status=403)
-        Model, model_policy = self._model_policy(credential, model_name, "read")
+        Model, model_policy = self._model_policy(access, model_name, "read")
         ids = self._parse_ids(
             payload.get("ids", []),
             max_count=method_policy.max_record_count,
@@ -750,28 +768,28 @@ class OdooMcpService(models.AbstractModel):
         }
 
     @api.model
-    def _execute_action(self, credential, action, payload):
-        normalized, _preview = self._prepare_action(credential, action, payload)
+    def _execute_action(self, access, action, payload):
+        normalized, _preview = self._prepare_action(access, action, payload)
         model_name = normalized["model"]
         if action == "record.create":
-            Model, policy = self._model_policy(credential, model_name, "create")
+            Model, policy = self._model_policy(access, model_name, "create")
             records = Model.create(normalized["values"])
             self._enforce_forced_domain_postcondition(records, policy)
             return {"model": model_name, "ids": records.ids, "count": len(records)}
         if action == "record.update":
-            Model, policy = self._model_policy(credential, model_name, "write")
+            Model, policy = self._model_policy(access, model_name, "write")
             records = self._records_in_policy(Model, policy, normalized["ids"], "write")
             records.write(normalized["values"])
             self._enforce_forced_domain_postcondition(records, policy)
             return {"model": model_name, "ids": records.ids, "count": len(records)}
         if action == "record.delete":
-            Model, policy = self._model_policy(credential, model_name, "unlink")
+            Model, policy = self._model_policy(access, model_name, "unlink")
             records = self._records_in_policy(Model, policy, normalized["ids"], "unlink")
             ids = records.ids
             records.unlink()
             return {"model": model_name, "ids": ids, "count": len(ids)}
         if action == "message.post":
-            Model, policy = self._model_policy(credential, model_name, "write")
+            Model, policy = self._model_policy(access, model_name, "write")
             record = self._records_in_policy(Model, policy, [normalized["id"]], "write")
             message = record.message_post(
                 body=Markup("<p>%s</p>") % escape(normalized["body"]),
@@ -779,7 +797,7 @@ class OdooMcpService(models.AbstractModel):
             )
             return {"model": model_name, "id": record.id, "message_id": message.id}
         if action == "activity.schedule":
-            Model, policy = self._model_policy(credential, model_name, "write")
+            Model, policy = self._model_policy(access, model_name, "write")
             record = self._records_in_policy(Model, policy, [normalized["id"]], "write")
             values = {}
             if normalized.get("user_id"):
@@ -793,7 +811,7 @@ class OdooMcpService(models.AbstractModel):
             )
             return {"model": model_name, "id": record.id, "activity_ids": activity.ids}
         if action == "attachment.create":
-            Model, policy = self._model_policy(credential, model_name, "write")
+            Model, policy = self._model_policy(access, model_name, "write")
             record = self._records_in_policy(Model, policy, [normalized["id"]], "write")
             attachment = Model.env["ir.attachment"].create(
                 {
@@ -806,7 +824,7 @@ class OdooMcpService(models.AbstractModel):
             )
             return {"model": model_name, "id": record.id, "attachment_id": attachment.id}
         if action == "method.call":
-            Model, policy = self._model_policy(credential, model_name, "read")
+            Model, policy = self._model_policy(access, model_name, "read")
             records = (
                 self._records_in_policy(Model, policy, normalized["ids"], "read")
                 if normalized["ids"]
@@ -816,29 +834,34 @@ class OdooMcpService(models.AbstractModel):
                 *normalized["args"],
                 **normalized["kwargs"],
             )
-            return {"model": model_name, "method": normalized["method"], "result": self._json_safe(result)}
+            return {
+                "model": model_name,
+                "ids": records.ids,
+                "method": normalized["method"],
+                "result": self._json_safe(result),
+            }
         raise McpServiceError("unknown_action", _("Unknown change action."), status=404)
 
     @api.model
-    def _business_env(self, credential):
-        company_ids = credential.profile_id._allowed_company_ids(credential.user_id)
+    def _business_env(self, access):
+        company_ids = access.profile_id._allowed_company_ids(access.user_id)
         context = {
             **self.env.context,
             "allowed_company_ids": company_ids,
         }
         return self.env(
-            user=credential.user_id.id,
+            user=access.user_id.id,
             su=False,
             context=context,
         )
 
     @api.model
-    def _model_policy(self, credential, model_name, operation):
+    def _model_policy(self, access, model_name, operation):
         try:
-            policy = credential.profile_id._get_policy(model_name, operation)
+            policy = access.profile_id._get_policy(model_name, operation)
         except ValidationError as exc:
             raise McpServiceError("policy_denied", str(exc), status=403) from exc
-        env = self._business_env(credential)
+        env = self._business_env(access)
         if model_name not in env:
             raise McpServiceError("unknown_model", _("Model is not installed."), status=404)
         Model = env[model_name]
@@ -982,7 +1005,7 @@ class OdooMcpService(models.AbstractModel):
         return value
 
     @api.model
-    def _approval_for_credential(self, credential, approval_id):
+    def _approval_for_access(self, access, approval_id):
         if not isinstance(approval_id, str) or len(approval_id) > 64:
             raise McpServiceError("invalid_approval", _("A valid approval ID is required."))
         approval = (
@@ -990,7 +1013,7 @@ class OdooMcpService(models.AbstractModel):
             .sudo()
             .search(
                 [
-                    ("credential_id", "=", credential.id),
+                    ("access_id", "=", access.id),
                     ("request_uid", "=", approval_id),
                 ],
                 limit=1,
@@ -1083,7 +1106,7 @@ class OdooMcpService(models.AbstractModel):
     @api.model
     def _audit(
         self,
-        credential,
+        access,
         *,
         request_id,
         operation,
@@ -1102,9 +1125,9 @@ class OdooMcpService(models.AbstractModel):
     ):
         values = {
             "request_id": request_id,
-            "credential_id": credential.id,
-            "profile_id": credential.profile_id.id,
-            "connector_user_id": credential.user_id.id,
+            "access_id": access.id,
+            "profile_id": access.profile_id.id,
+            "user_id": access.user_id.id,
             "approval_id": approval.id if approval else False,
             "operation": operation,
             "model_name": model_name,

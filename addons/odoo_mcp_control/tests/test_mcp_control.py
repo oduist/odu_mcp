@@ -1,5 +1,7 @@
 import json
 
+from psycopg2 import IntegrityError
+
 from odoo import Command, fields
 from odoo.exceptions import AccessError
 from odoo.tests import tagged
@@ -25,6 +27,20 @@ class TestMcpControl(TransactionCase):
             ]
         )
         cls.name_field = partner_fields.filtered(lambda field: field.name == "name")
+        cls.mcp_user = cls.env["res.users"].create(
+            {
+                "name": "MCP Test User",
+                "login": "mcp-test-user@example.com",
+                "group_ids": [
+                    Command.set(
+                        [
+                            cls.env.ref("base.group_user").id,
+                            cls.env.ref("base.group_partner_manager").id,
+                        ]
+                    )
+                ],
+            }
+        )
         cls.profile = cls.env["odoo.mcp.profile"].create(
             {
                 "name": "Test MCP Profile",
@@ -48,19 +64,23 @@ class TestMcpControl(TransactionCase):
                 "write_field_ids": [Command.set(cls.name_field.ids)],
             }
         )
-        cls.credential = cls.env["odoo.mcp.credential"].create(
+        cls.access = cls.env["odoo.mcp.access"].create(
             {
-                "name": "Test connector",
+                "name": "Test user access",
                 "profile_id": cls.profile.id,
-                "user_id": cls.env.ref("base.user_admin").id,
+                "user_id": cls.mcp_user.id,
             }
         )
-        cls.token = cls.credential._generate_secret()
+        cls.token = cls.env["res.users.apikeys"].with_user(cls.mcp_user)._generate(
+            "mcp",
+            "MCP test key",
+            fields.Datetime.add(fields.Datetime.now(), days=1),
+        )
         cls.service = cls.env["odoo.mcp.service"]
 
     def _request(self, operation, params=None, request_id="00000000-0000-4000-8000-000000000001"):
         return self.service.execute_request(
-            self.credential,
+            self.access,
             operation,
             params or {},
             request_id,
@@ -75,35 +95,71 @@ class TestMcpControl(TransactionCase):
         approval.action_approve()
         return approval
 
-    def test_credential_authentication_and_ip_allowlist(self):
-        credential, error = self.env["odoo.mcp.credential"]._authenticate(
-            self.token,
-            "127.0.0.1",
+    def test_mcp_api_key_and_access_resolution(self):
+        global_token = self.env["res.users.apikeys"].with_user(self.mcp_user)._generate(
+            None,
+            "Global test key",
+            fields.Datetime.add(fields.Datetime.now(), days=1),
         )
-        self.assertFalse(error)
-        self.assertEqual(credential, self.credential)
+        user_id = self.env["res.users.apikeys"]._check_mcp_credentials(self.token)
+        global_user_id = self.env["res.users.apikeys"]._check_mcp_credentials(global_token)
+        rpc_user_id = self.env["res.users.apikeys"]._check_credentials(
+            scope="rpc",
+            key=self.token,
+        )
+        access, error = self.env["odoo.mcp.access"]._for_user(self.mcp_user)
 
-        invalid, error = self.env["odoo.mcp.credential"]._authenticate(
-            f"{self.token}x",
-            "127.0.0.1",
-        )
-        self.assertFalse(invalid)
-        self.assertEqual(error, "invalid_credential")
-
-        self.credential.allowed_ip_networks = "10.0.0.0/8"
-        allowed, error = self.env["odoo.mcp.credential"]._authenticate(
-            self.token,
-            "10.10.20.30",
-        )
-        self.assertEqual(allowed, self.credential)
+        self.assertEqual(user_id, self.mcp_user.id)
+        self.assertFalse(global_user_id)
+        self.assertFalse(rpc_user_id)
         self.assertFalse(error)
-        denied, error = self.env["odoo.mcp.credential"]._authenticate(
-            self.token,
-            "192.0.2.1",
+        self.assertEqual(access, self.access)
+
+    def test_event_ticket_is_hashed_and_bound_to_access(self):
+        Ticket = self.env["odoo.mcp.event.ticket"]
+        token = Ticket._issue(self.access)
+        ticket = Ticket.sudo().search(
+            [("token_hash", "=", Ticket._digest(token))],
+            limit=1,
         )
-        self.assertFalse(denied)
-        self.assertEqual(error, "ip_not_allowed")
-        self.credential.allowed_ip_networks = False
+        expires_at = ticket.expires_at
+
+        self.assertTrue(ticket)
+        self.assertNotEqual(ticket.token_hash, token)
+        self.assertEqual(Ticket._check(token).access_id, self.access)
+        ticket.invalidate_recordset(["expires_at"])
+        self.assertEqual(ticket.expires_at, expires_at)
+        self.assertFalse(Ticket._check("invalid-ticket"))
+
+    def test_resource_update_uses_private_channel_and_version(self):
+        previous_version = self.access.event_version
+        version = self.access._publish_resource_update(
+            "odoo://approval/00000000-0000-4000-8000-000000000001"
+        )
+        messages = self.env.cr.precommit.data["bus.bus.values"]
+        wire_message = json.loads(messages[-1]["message"])
+
+        self.assertEqual(version, previous_version + 1)
+        self.assertEqual(
+            json.loads(messages[-1]["channel"]),
+            [self.env.cr.dbname, self.access.event_channel],
+        )
+        self.assertEqual(wire_message["type"], "odoo_mcp_resource_updated")
+        self.assertEqual(wire_message["payload"]["version"], version)
+        self.assertEqual(
+            wire_message["payload"]["uri"],
+            "odoo://approval/00000000-0000-4000-8000-000000000001",
+        )
+
+    def test_one_access_assignment_per_user(self):
+        with self.env.cr.savepoint(), self.assertRaises(IntegrityError):
+            self.env["odoo.mcp.access"].create(
+                {
+                    "name": "Duplicate access",
+                    "profile_id": self.profile.id,
+                    "user_id": self.mcp_user.id,
+                }
+            )
 
     def test_forced_domain_and_field_policy(self):
         body, status = self._request(
@@ -254,32 +310,28 @@ class TestMcpControl(TransactionCase):
         with self.assertRaises(AccessError):
             audit.unlink()
 
-    def test_revoke_secret(self):
-        self.credential.action_revoke()
-        credential, error = self.env["odoo.mcp.credential"]._authenticate(
-            self.token,
-            "127.0.0.1",
-        )
-        self.assertFalse(credential)
-        self.assertEqual(error, "invalid_credential")
+    def test_inactive_access_is_rejected(self):
+        self.access.active = False
+        access, error = self.env["odoo.mcp.access"]._for_user(self.mcp_user)
+        self.assertFalse(access)
+        self.assertEqual(error, "inactive_mcp_access")
+        self.access.active = True
 
-    def test_expired_credential(self):
+    def test_expired_mcp_api_key(self):
+        token = self.env["res.users.apikeys"].with_user(self.mcp_user)._generate(
+            "mcp",
+            "Expired MCP test key",
+            fields.Datetime.add(fields.Datetime.now(), days=1),
+        )
         expired_at = fields.Datetime.subtract(fields.Datetime.now(), seconds=1)
         self.env.cr.execute(
-            "UPDATE odoo_mcp_credential SET expires_at = %s WHERE id = %s",
-            [expired_at, self.credential.id],
+            "UPDATE res_users_apikeys SET expiration_date = %s WHERE index = %s",
+            [expired_at, token[:8]],
         )
-        self.credential.invalidate_recordset(["expires_at"])
+        user_id = self.env["res.users.apikeys"]._check_mcp_credentials(token)
+        self.assertFalse(user_id)
 
-        credential, error = self.env["odoo.mcp.credential"]._authenticate(
-            self.token,
-            "127.0.0.1",
-        )
-
-        self.assertFalse(credential)
-        self.assertEqual(error, "expired_credential")
-
-    def test_rate_limit_is_enforced_per_credential(self):
+    def test_rate_limit_is_enforced_per_access(self):
         self.profile.rate_limit_per_minute = 1
         first, first_status = self._request("system.info")
         second, second_status = self._request("system.info")

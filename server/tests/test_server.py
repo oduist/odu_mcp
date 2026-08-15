@@ -24,20 +24,21 @@ ALL_GROUPS = frozenset(
 def _settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
         "odoo_url": "https://odoo.example.test",
-        "connector_token": "connector-secret",
         "tool_groups": ALL_GROUPS,
+        "events_enabled": False,
     }
     values.update(overrides)
     return Settings(**values)
 
 
-def test_registers_complete_but_bounded_contract() -> None:
+@pytest.mark.asyncio
+async def test_registers_complete_but_bounded_contract() -> None:
     server = create_server(_settings())
 
-    tools = {tool.name: tool for tool in server._tool_manager.list_tools()}
-    resources = server._resource_manager.list_resources()
-    templates = server._resource_manager.list_templates()
-    prompts = server._prompt_manager.list_prompts()
+    tools = {tool.name: tool for tool in await server.list_tools()}
+    resources = await server.list_resources()
+    templates = await server.list_resource_templates()
+    prompts = await server.list_prompts()
 
     assert len(tools) == 24
     assert {
@@ -51,31 +52,28 @@ def test_registers_complete_but_bounded_contract() -> None:
         "odoo_project_status",
         "odoo_absence_overview",
     } <= tools.keys()
-    assert "force" not in tools["odoo_execute_approved_change"].parameters["properties"]
+    execute_schema = tools["odoo_execute_approved_change"].parameters
+    assert "force" not in execute_schema["properties"]
     assert len(resources) + len(templates) == 4
     assert len(prompts) == 6
+    assert "subscriptions/listen" in server._mcp_server._request_handlers
 
 
 @pytest.mark.asyncio
 async def test_http_health_and_readiness_routes() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/odoo_mcp/v1/health"
+        assert "Authorization" not in request.headers
         return httpx.Response(
             200,
             json={"status": "ok", "service": "odoo_mcp_control"},
             request=request,
         )
 
-    server = create_server(
-        _settings(transport="streamable-http"),
-        client_transport=httpx.MockTransport(handler),
-    )
-
-    transport = httpx.ASGITransport(app=server.streamable_http_app())
-    async with httpx.AsyncClient(
-        transport=transport,
-        base_url="http://mcp.test",
-    ) as client:
+    server = create_server(_settings(), client_transport=httpx.MockTransport(handler))
+    app = server.http_app(path="/mcp", stateless_http=True, json_response=True)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://mcp.test") as client:
         assert (await client.get("/healthz")).json()["status"] == "ok"
         response = await client.get("/readyz")
 
@@ -88,7 +86,7 @@ async def test_http_health_and_readiness_routes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_readiness_returns_503_without_leaking_connector_details() -> None:
+async def test_readiness_returns_503_without_leaking_odoo_details() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             503,
@@ -104,15 +102,12 @@ async def test_readiness_returns_503_without_leaking_connector_details() -> None
         )
 
     server = create_server(
-        _settings(transport="streamable-http", retry_attempts=1),
+        _settings(retry_attempts=1),
         client_transport=httpx.MockTransport(handler),
     )
-
-    transport = httpx.ASGITransport(app=server.streamable_http_app())
-    async with httpx.AsyncClient(
-        transport=transport,
-        base_url="http://mcp.test",
-    ) as client:
+    app = server.http_app(path="/mcp", stateless_http=True, json_response=True)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://mcp.test") as client:
         response = await client.get("/readyz")
 
     assert response.status_code == 503

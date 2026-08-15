@@ -14,8 +14,8 @@
                 <field name="status_code"/>
                 <field name="operation"/>
                 <field name="model_name"/>
-                <field name="credential_id"/>
-                <field name="connector_user_id"/>
+                <field name="access_id"/>
+                <field name="user_id"/>
                 <field name="duration_ms"/>
                 <field name="error_code"/>
             </list>
@@ -34,9 +34,9 @@
                     <group>
                         <group>
                             <field name="create_date"/>
-                            <field name="credential_id"/>
+                            <field name="access_id"/>
                             <field name="profile_id"/>
-                            <field name="connector_user_id"/>
+                            <field name="user_id"/>
                             <field name="approval_id"/>
                             <field name="remote_ip"/>
                         </group>
@@ -69,7 +69,7 @@
                 <field name="request_id"/>
                 <field name="operation"/>
                 <field name="model_name"/>
-                <field name="credential_id"/>
+                <field name="access_id"/>
                 <field name="error_code"/>
                 <filter name="failed" string="Errors" domain="[('outcome', '=', 'error')]"/>
                 <filter name="denied" string="Denied" domain="[('outcome', '=', 'denied')]"/>

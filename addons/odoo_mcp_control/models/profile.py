@@ -48,7 +48,7 @@ class OdooMcpProfile(models.Model):
     allow_activities = fields.Boolean()
     policy_ids = fields.One2many("odoo.mcp.model.policy", "profile_id")
     method_policy_ids = fields.One2many("odoo.mcp.method.policy", "profile_id")
-    credential_ids = fields.One2many("odoo.mcp.credential", "profile_id")
+    access_ids = fields.One2many("odoo.mcp.access", "profile_id")
 
     _code_unique = models.Constraint(
         "UNIQUE(code)",

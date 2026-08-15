@@ -1,4 +1,17 @@
-# Odoo addons
+# Odoo Addons
 
-This directory contains installable Odoo addons. The first-party integration
-module is `odoo_mcp_control`.
+`odoo_mcp_control` is the Odoo 19 control plane for the HTTP FastMCP sidecar.
+
+Install it only on a fresh database. This version deliberately refuses to load
+if the removed legacy credential schema is detected.
+
+After installation:
+
+1. Create an MCP profile and its model/field policies.
+2. Assign the profile to an Odoo user under **MCP Control > User Access**.
+3. Have that user open their profile's API Keys dialog, create a key, and choose
+   **MCP only**.
+4. Configure the key as the bearer token in the user's MCP client.
+
+For subscriptions, route `/odoo_mcp/v1/events` to Odoo's evented worker in the
+same way as the standard Odoo `/websocket` endpoint.

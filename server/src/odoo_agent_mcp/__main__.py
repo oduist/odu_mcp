@@ -31,7 +31,15 @@ def main() -> None:
         raise SystemExit(2) from exc
     _configure_logging(settings)
     mcp = create_server(settings)
-    mcp.run(transport=settings.transport)
+    mcp.run(
+        transport="http",
+        host=settings.host,
+        port=settings.port,
+        path=settings.mcp_path,
+        stateless_http=True,
+        json_response=True,
+        log_level=settings.log_level,
+    )
 
 
 if __name__ == "__main__":

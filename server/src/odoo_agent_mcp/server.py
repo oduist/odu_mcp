@@ -6,16 +6,17 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
-from mcp.server.auth.settings import AuthSettings
-from mcp.server.fastmcp import Context, FastMCP
-from mcp.server.fastmcp.exceptions import ToolError
-from mcp.types import ToolAnnotations
-from pydantic import AnyHttpUrl, ValidationError
+from fastmcp import Context, FastMCP
+from fastmcp.exceptions import ToolError
+from fastmcp.server.dependencies import get_access_token
+from mcp_types import ToolAnnotations
+from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from .auth import JwtTokenVerifier, StaticTokenVerifier
+from .auth import OdooApiKeyVerifier
 from .client import OdooControlClient
+from .concurrency import UserOperationLimiter
 from .config import Settings
 from .errors import OdooApiError
 from .schemas import (
@@ -35,6 +36,7 @@ from .schemas import (
     ReportRequest,
     SearchRequest,
 )
+from .subscriptions import OdooEventBridge, SubscriptionPublisher
 
 READ_ONLY = ToolAnnotations(
     readOnlyHint=True,
@@ -60,7 +62,7 @@ EXECUTE = ToolAnnotations(
 class Runtime:
     settings: Settings
     client: OdooControlClient
-    jwt_verifier: JwtTokenVerifier | None = None
+    limiter: UserOperationLimiter
 
 
 def _runtime(ctx: Context) -> Runtime:
@@ -75,12 +77,18 @@ async def _execute(
     operation: str,
     params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    access_token = get_access_token()
+    if access_token is None or not access_token.subject:
+        raise ToolError("authentication_required: A valid Odoo MCP API key is required.")
     try:
-        return await _runtime(ctx).client.execute(
-            operation,
-            params,
-            request_id=str(uuid.uuid4()),
-        )
+        runtime = _runtime(ctx)
+        async with runtime.limiter.acquire(access_token.subject):
+            return await runtime.client.execute(
+                operation,
+                params,
+                bearer_token=access_token.token,
+                request_id=str(uuid.uuid4()),
+            )
     except OdooApiError as exc:
         raise ToolError(str(exc)) from exc
 
@@ -98,54 +106,41 @@ def create_server(
     client_transport: Any | None = None,
     auth_transport: Any | None = None,
 ) -> FastMCP:
-    jwt_verifier: JwtTokenVerifier | None = None
-    token_verifier = None
-    auth_settings = None
-    if settings.auth_mode == "static-token":
-        token_verifier = StaticTokenVerifier(settings)
-        resource_url = settings.resource_server_url or (f"http://{settings.host}:{settings.port}")
-        auth_settings = AuthSettings(
-            issuer_url=AnyHttpUrl(resource_url),
-            resource_server_url=AnyHttpUrl(resource_url),
-            required_scopes=list(settings.required_scopes),
-        )
-    elif settings.auth_mode == "oauth":
-        jwt_verifier = JwtTokenVerifier(settings, transport=auth_transport)
-        token_verifier = jwt_verifier
-        auth_settings = AuthSettings(
-            issuer_url=AnyHttpUrl(settings.oauth_issuer_url),
-            resource_server_url=AnyHttpUrl(settings.resource_server_url),
-            required_scopes=list(settings.required_scopes),
-        )
+    publisher = SubscriptionPublisher()
+    event_bridge = OdooEventBridge(settings, publisher, transport=auth_transport)
+    verifier = OdooApiKeyVerifier(
+        settings,
+        transport=auth_transport,
+        on_verified=event_bridge.ensure_watcher,
+    )
 
     @asynccontextmanager
     async def lifespan(_server: FastMCP):
         client = OdooControlClient(settings, transport=client_transport)
-        runtime = Runtime(settings=settings, client=client, jwt_verifier=jwt_verifier)
+        runtime = Runtime(
+            settings=settings,
+            client=client,
+            limiter=UserOperationLimiter(settings.user_lock_timeout_seconds),
+        )
         try:
             yield runtime
         finally:
             await client.aclose()
-            if jwt_verifier:
-                await jwt_verifier.aclose()
+            await event_bridge.aclose()
+            await verifier.aclose()
 
     mcp = FastMCP(
         name="Odoo Agent MCP",
         instructions=(
             "Use read tools freely within the Odoo policy. "
+            "Do not invoke tools in parallel for the same Odoo identity. "
             "A preview is not an executed change. Mutations require an Odoo approval "
             "followed by odoo_execute_approved_change."
         ),
-        host=settings.host,
-        port=settings.port,
-        streamable_http_path=settings.mcp_path,
-        stateless_http=True,
-        json_response=True,
-        log_level=settings.log_level,
         lifespan=lifespan,
-        token_verifier=token_verifier,
-        auth=auth_settings,
+        auth=verifier,
     )
+    publisher.install(mcp)
     _register_core(mcp)
     _register_resources(mcp)
     _register_prompts(mcp)
@@ -208,28 +203,28 @@ def _register_health_routes(
 
 
 def _register_core(mcp: FastMCP) -> None:
-    @mcp.tool(annotations=READ_ONLY, structured_output=True)
+    @mcp.tool(annotations=READ_ONLY)
     async def odoo_server_info(ctx: Context) -> dict[str, Any]:
         """Return Odoo version, connector profile, companies, and enabled capabilities."""
         return await _execute(ctx, "system.info")
 
-    @mcp.tool(annotations=READ_ONLY, structured_output=True)
+    @mcp.tool(annotations=READ_ONLY)
     async def odoo_whoami(ctx: Context) -> dict[str, Any]:
         """Return the effective Odoo user, company, language, timezone, and profile."""
         return await _execute(ctx, "identity.whoami")
 
-    @mcp.tool(annotations=READ_ONLY, structured_output=True)
+    @mcp.tool(annotations=READ_ONLY)
     async def odoo_list_models(ctx: Context) -> dict[str, Any]:
         """List only Odoo models and operations allowed by the connector profile."""
         return await _execute(ctx, "models.list")
 
-    @mcp.tool(annotations=READ_ONLY, structured_output=True)
+    @mcp.tool(annotations=READ_ONLY)
     async def odoo_describe_model(model: str, ctx: Context) -> dict[str, Any]:
         """Describe policy-visible fields and allowed operations for one model."""
         params = _validated(ModelRequest, {"model": model})
         return await _execute(ctx, "models.describe", params)
 
-    @mcp.tool(annotations=READ_ONLY, structured_output=True)
+    @mcp.tool(annotations=READ_ONLY)
     async def odoo_search_records(
         model: str,
         ctx: Context,
@@ -253,7 +248,7 @@ def _register_core(mcp: FastMCP) -> None:
         )
         return await _execute(ctx, "records.search", params)
 
-    @mcp.tool(annotations=READ_ONLY, structured_output=True)
+    @mcp.tool(annotations=READ_ONLY)
     async def odoo_get_record(
         model: str,
         ids: list[int],
@@ -267,7 +262,7 @@ def _register_core(mcp: FastMCP) -> None:
         )
         return await _execute(ctx, "records.read", params)
 
-    @mcp.tool(annotations=READ_ONLY, structured_output=True)
+    @mcp.tool(annotations=READ_ONLY)
     async def odoo_count_records(
         model: str,
         ctx: Context,
@@ -278,7 +273,7 @@ def _register_core(mcp: FastMCP) -> None:
         params["domain"] = domain or []
         return await _execute(ctx, "records.count", params)
 
-    @mcp.tool(annotations=READ_ONLY, structured_output=True)
+    @mcp.tool(annotations=READ_ONLY)
     async def odoo_aggregate_records(
         model: str,
         fields: list[str],
@@ -300,7 +295,7 @@ def _register_core(mcp: FastMCP) -> None:
         )
         return await _execute(ctx, "records.aggregate", params)
 
-    @mcp.tool(annotations=READ_ONLY, structured_output=True)
+    @mcp.tool(annotations=READ_ONLY)
     async def odoo_get_change_status(
         approval_id: str,
         ctx: Context,
@@ -309,7 +304,7 @@ def _register_core(mcp: FastMCP) -> None:
         params = _validated(ApprovalRequest, {"approval_id": approval_id})
         return await _execute(ctx, "changes.status", params)
 
-    @mcp.tool(annotations=EXECUTE, structured_output=True)
+    @mcp.tool(annotations=EXECUTE)
     async def odoo_execute_approved_change(
         approval_id: str,
         ctx: Context,
@@ -320,7 +315,7 @@ def _register_core(mcp: FastMCP) -> None:
 
 
 def _register_write(mcp: FastMCP) -> None:
-    @mcp.tool(annotations=PREVIEW, structured_output=True)
+    @mcp.tool(annotations=PREVIEW)
     async def odoo_preview_create(
         model: str,
         values: dict[str, Any] | list[dict[str, Any]],
@@ -342,7 +337,7 @@ def _register_write(mcp: FastMCP) -> None:
             },
         )
 
-    @mcp.tool(annotations=PREVIEW, structured_output=True)
+    @mcp.tool(annotations=PREVIEW)
     async def odoo_preview_update(
         model: str,
         ids: list[int],
@@ -374,7 +369,7 @@ def _register_write(mcp: FastMCP) -> None:
             },
         )
 
-    @mcp.tool(annotations=PREVIEW, structured_output=True)
+    @mcp.tool(annotations=PREVIEW)
     async def odoo_preview_delete(
         model: str,
         ids: list[int],
@@ -396,7 +391,7 @@ def _register_write(mcp: FastMCP) -> None:
             },
         )
 
-    @mcp.tool(annotations=PREVIEW, structured_output=True)
+    @mcp.tool(annotations=PREVIEW)
     async def odoo_preview_method(
         model: str,
         method: str,
@@ -432,7 +427,7 @@ def _register_write(mcp: FastMCP) -> None:
 
 
 def _register_collaboration(mcp: FastMCP) -> None:
-    @mcp.tool(annotations=PREVIEW, structured_output=True)
+    @mcp.tool(annotations=PREVIEW)
     async def odoo_preview_post_message(
         model: str,
         id: int,
@@ -457,7 +452,7 @@ def _register_collaboration(mcp: FastMCP) -> None:
             {"action": "message.post", "payload": values, "idempotency_key": key},
         )
 
-    @mcp.tool(annotations=PREVIEW, structured_output=True)
+    @mcp.tool(annotations=PREVIEW)
     async def odoo_preview_schedule_activity(
         model: str,
         id: int,
@@ -492,7 +487,7 @@ def _register_collaboration(mcp: FastMCP) -> None:
 
 
 def _register_documents(mcp: FastMCP) -> None:
-    @mcp.tool(annotations=READ_ONLY, structured_output=True)
+    @mcp.tool(annotations=READ_ONLY)
     async def odoo_read_attachment(
         attachment_id: int,
         ctx: Context,
@@ -501,7 +496,7 @@ def _register_documents(mcp: FastMCP) -> None:
         params = _validated(AttachmentReadRequest, {"attachment_id": attachment_id})
         return await _execute(ctx, "attachments.read", params)
 
-    @mcp.tool(annotations=PREVIEW, structured_output=True)
+    @mcp.tool(annotations=PREVIEW)
     async def odoo_preview_upload_attachment(
         model: str,
         id: int,
@@ -530,7 +525,7 @@ def _register_documents(mcp: FastMCP) -> None:
             {"action": "attachment.create", "payload": values, "idempotency_key": key},
         )
 
-    @mcp.tool(annotations=READ_ONLY, structured_output=True)
+    @mcp.tool(annotations=READ_ONLY)
     async def odoo_render_report(
         report: str,
         ids: list[int],
@@ -544,7 +539,7 @@ def _register_documents(mcp: FastMCP) -> None:
 def _register_domain_tools(mcp: FastMCP, groups: frozenset[str]) -> None:
     if "sales" in groups:
 
-        @mcp.tool(annotations=READ_ONLY, structured_output=True)
+        @mcp.tool(annotations=READ_ONLY)
         async def odoo_sales_snapshot(
             ctx: Context,
             date_from: str | None = None,
@@ -580,7 +575,7 @@ def _register_domain_tools(mcp: FastMCP, groups: frozenset[str]) -> None:
 
     if "accounting" in groups:
 
-        @mcp.tool(annotations=READ_ONLY, structured_output=True)
+        @mcp.tool(annotations=READ_ONLY)
         async def odoo_receivables_aging(
             ctx: Context,
             date_to: str | None = None,
@@ -617,7 +612,7 @@ def _register_domain_tools(mcp: FastMCP, groups: frozenset[str]) -> None:
 
     if "inventory" in groups:
 
-        @mcp.tool(annotations=READ_ONLY, structured_output=True)
+        @mcp.tool(annotations=READ_ONLY)
         async def odoo_inventory_risk(
             ctx: Context,
             limit: int = 50,
@@ -643,7 +638,7 @@ def _register_domain_tools(mcp: FastMCP, groups: frozenset[str]) -> None:
 
     if "projects" in groups:
 
-        @mcp.tool(annotations=READ_ONLY, structured_output=True)
+        @mcp.tool(annotations=READ_ONLY)
         async def odoo_project_status(
             ctx: Context,
             limit: int = 100,
@@ -663,7 +658,7 @@ def _register_domain_tools(mcp: FastMCP, groups: frozenset[str]) -> None:
 
     if "hr" in groups:
 
-        @mcp.tool(annotations=READ_ONLY, structured_output=True)
+        @mcp.tool(annotations=READ_ONLY)
         async def odoo_absence_overview(
             ctx: Context,
             date_from: str | None = None,

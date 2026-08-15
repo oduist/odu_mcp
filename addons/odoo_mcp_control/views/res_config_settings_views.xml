@@ -14,7 +14,7 @@
                     <block title="Connector API" name="mcp_connector_api">
                         <setting id="mcp_enabled"
                                  string="Enable connector API"
-                                 help="Disable all authenticated connector operations without deleting credentials.">
+                                 help="Disable all authenticated MCP operations without deleting user access assignments.">
                             <field name="odoo_mcp_enabled"/>
                         </setting>
                         <setting id="mcp_payload_limit"

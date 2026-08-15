@@ -19,10 +19,10 @@
               sequence="20"
               groups="odoo_mcp_control.group_mcp_auditor"/>
 
-    <menuitem id="menu_mcp_credentials"
-              name="Connector Credentials"
+    <menuitem id="menu_mcp_access"
+              name="User Access"
               parent="menu_mcp_root"
-              action="action_odoo_mcp_credentials"
+              action="action_odoo_mcp_access"
               sequence="30"
               groups="odoo_mcp_control.group_mcp_auditor"/>
 

@@ -5,7 +5,7 @@ import json
 import random
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -30,28 +30,66 @@ SAFE_OPERATIONS = {
 RETRYABLE_STATUS = {502, 503, 504}
 
 
+@dataclass(frozen=True, slots=True)
+class CircuitPermit:
+    generation: int
+    probe: bool = False
+
+
 @dataclass(slots=True)
 class CircuitBreaker:
     failure_threshold: int
     reset_seconds: int
     failures: int = 0
     opened_at: float | None = None
+    _probe_in_flight: bool = False
+    _generation: int = 0
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
-    def allow_request(self) -> bool:
+    @property
+    def state(self) -> str:
         if self.opened_at is None:
-            return True
-        if time.monotonic() - self.opened_at >= self.reset_seconds:
-            return True
-        return False
+            return "closed"
+        if self._probe_in_flight:
+            return "half_open"
+        return "open"
 
-    def record_success(self) -> None:
-        self.failures = 0
-        self.opened_at = None
+    async def acquire(self) -> CircuitPermit:
+        async with self._lock:
+            if self.opened_at is None:
+                return CircuitPermit(self._generation)
+            if time.monotonic() - self.opened_at < self.reset_seconds:
+                raise CircuitOpenError()
+            if self._probe_in_flight:
+                raise CircuitOpenError()
+            self._probe_in_flight = True
+            return CircuitPermit(self._generation, probe=True)
 
-    def record_failure(self) -> None:
-        self.failures += 1
-        if self.failures >= self.failure_threshold:
-            self.opened_at = time.monotonic()
+    async def record_success(self, permit: CircuitPermit) -> None:
+        async with self._lock:
+            if permit.generation != self._generation:
+                return
+            self.failures = 0
+            self.opened_at = None
+            self._probe_in_flight = False
+            if permit.probe:
+                self._generation += 1
+
+    async def record_failure(self, permit: CircuitPermit) -> None:
+        async with self._lock:
+            if permit.generation != self._generation:
+                return
+            self.failures += 1
+            if permit.probe or self.failures >= self.failure_threshold:
+                self.opened_at = time.monotonic()
+                self._probe_in_flight = False
+                self._generation += 1
+
+    async def release(self, permit: CircuitPermit) -> None:
+        """Release an unresolved half-open probe without changing breaker state."""
+        async with self._lock:
+            if permit.generation == self._generation and permit.probe:
+                self._probe_in_flight = False
 
 
 class OdooControlClient:
@@ -75,10 +113,9 @@ class OdooControlClient:
             limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
             transport=transport,
             headers={
-                "Authorization": f"Bearer {settings.connector_token}",
                 "Content-Type": "application/json",
                 "Accept": "application/json",
-                "User-Agent": "odoo-agent-mcp/1.0",
+                "User-Agent": "odoo-agent-mcp/2.0",
             },
         )
         self.circuit = CircuitBreaker(
@@ -86,7 +123,7 @@ class OdooControlClient:
             settings.circuit_reset_seconds,
         )
 
-    async def __aenter__(self) -> "OdooControlClient":
+    async def __aenter__(self) -> OdooControlClient:
         return self
 
     async def __aexit__(self, *args: object) -> None:
@@ -98,10 +135,11 @@ class OdooControlClient:
     async def health(self) -> dict[str, Any]:
         return await self._request_json("GET", "/odoo_mcp/v1/health", safe=True)
 
-    async def capabilities(self) -> dict[str, Any]:
+    async def capabilities(self, bearer_token: str) -> dict[str, Any]:
         envelope = await self._request_json(
             "GET",
             "/odoo_mcp/v1/capabilities",
+            bearer_token=bearer_token,
             safe=True,
         )
         return self._unwrap(envelope)
@@ -111,6 +149,7 @@ class OdooControlClient:
         operation: str,
         params: dict[str, Any] | None = None,
         *,
+        bearer_token: str,
         request_id: str | None = None,
     ) -> dict[str, Any]:
         request_id = request_id or str(uuid.uuid4())
@@ -118,6 +157,7 @@ class OdooControlClient:
             "POST",
             "/odoo_mcp/v1/execute",
             json_body={"operation": operation, "params": params or {}},
+            bearer_token=bearer_token,
             request_id=request_id,
             safe=operation in SAFE_OPERATIONS,
         )
@@ -129,21 +169,25 @@ class OdooControlClient:
         path: str,
         *,
         json_body: dict[str, Any] | None = None,
+        bearer_token: str | None = None,
         request_id: str | None = None,
         safe: bool,
     ) -> dict[str, Any]:
-        if not self.circuit.allow_request():
-            raise CircuitOpenError()
         attempts = self.settings.retry_attempts if safe else 1
         last_error: OdooApiError | None = None
         for attempt in range(attempts):
+            permit = await self.circuit.acquire()
+            permit_resolved = False
             current_request_id = request_id or str(uuid.uuid4())
+            headers = {"X-Request-ID": current_request_id}
+            if bearer_token:
+                headers["Authorization"] = f"Bearer {bearer_token}"
             try:
                 async with self._client.stream(
                     method,
                     path,
                     json=json_body,
-                    headers={"X-Request-ID": current_request_id},
+                    headers=headers,
                 ) as response:
                     raw = bytearray()
                     async for chunk in response.aiter_bytes():
@@ -153,33 +197,38 @@ class OdooControlClient:
                                 max_bytes=self.settings.max_response_bytes,
                                 request_id=current_request_id,
                             )
-                    data = self._decode_json(raw, response, current_request_id)
-                    if response.status_code in RETRYABLE_STATUS and safe:
-                        raise OdooApiError(
+                    if response.status_code in RETRYABLE_STATUS:
+                        last_error = OdooApiError(
                             code="connector_unavailable",
                             message="Odoo connector returned a temporary gateway error.",
                             retryable=True,
                             status_code=response.status_code,
                             request_id=current_request_id,
                         )
+                        await self.circuit.record_failure(permit)
+                        permit_resolved = True
+                        if safe and attempt + 1 < attempts:
+                            await self._retry_delay(attempt)
+                            continue
+                        raise last_error
+                    try:
+                        data = self._decode_json(raw, response, current_request_id)
+                    except OdooApiError:
+                        await self.circuit.record_success(permit)
+                        permit_resolved = True
+                        raise
+                    await self.circuit.record_success(permit)
+                    permit_resolved = True
                     if response.status_code >= 400:
                         raise self._api_error(data, response.status_code, current_request_id)
-                    self.circuit.record_success()
                     return data
             except ResponseTooLargeError:
-                self.circuit.record_failure()
+                await self.circuit.record_success(permit)
+                permit_resolved = True
                 raise
-            except OdooApiError as exc:
-                last_error = exc
-                if not (safe and exc.retryable and attempt + 1 < attempts):
-                    self.circuit.record_failure()
-                    raise
-            except (
-                httpx.ConnectError,
-                httpx.ReadError,
-                httpx.RemoteProtocolError,
-                httpx.TimeoutException,
-            ) as exc:
+            except OdooApiError:
+                raise
+            except httpx.TransportError as exc:
                 last_error = OdooApiError(
                     code="connector_transport_error",
                     message="Could not communicate with the Odoo connector.",
@@ -187,17 +236,24 @@ class OdooControlClient:
                     status_code=503,
                     request_id=current_request_id,
                 )
+                await self.circuit.record_failure(permit)
+                permit_resolved = True
                 if not (safe and attempt + 1 < attempts):
-                    self.circuit.record_failure()
                     raise last_error from exc
-            await asyncio.sleep((0.1 * (2**attempt)) + random.uniform(0, 0.05))
-        self.circuit.record_failure()
+                await self._retry_delay(attempt)
+            finally:
+                if not permit_resolved:
+                    await self.circuit.release(permit)
         raise last_error or OdooApiError(
             code="connector_unavailable",
             message="Odoo connector is unavailable.",
             retryable=True,
             status_code=503,
         )
+
+    @staticmethod
+    async def _retry_delay(attempt: int) -> None:
+        await asyncio.sleep((0.1 * (2**attempt)) + random.uniform(0, 0.05))
 
     @staticmethod
     def _decode_json(

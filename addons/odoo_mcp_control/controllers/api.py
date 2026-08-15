@@ -1,13 +1,10 @@
 import json
-import logging
 import uuid
 
 from odoo import http
 from odoo.http import request
 from odoo.tools.misc import str2bool
 
-
-_logger = logging.getLogger(__name__)
 
 SECURITY_HEADERS = [
     ("Cache-Control", "no-store"),
@@ -37,13 +34,50 @@ class OdooMcpController(http.Controller):
         )
 
     @http.route(
-        "/odoo_mcp/v1/capabilities",
+        "/odoo_mcp/v1/identity",
         type="http",
-        auth="public",
+        auth="mcp",
         methods=["GET"],
         csrf=False,
         save_session=False,
         readonly=True,
+    )
+    def identity(self):
+        request_id = self._request_id()
+        if not self._enabled():
+            return self._error(
+                request_id,
+                "service_disabled",
+                "The MCP control API is disabled.",
+                503,
+                retryable=True,
+            )
+        access, response = self._access(request_id)
+        if response:
+            return response
+        user = request.env.user
+        return self._response(
+            {
+                "ok": True,
+                "request_id": request_id,
+                "data": {
+                    "database": request.db,
+                    "user_id": user.id,
+                    "login": user.login,
+                    "name": user.name,
+                    "profile": access.profile_id.code,
+                },
+            },
+            200,
+        )
+
+    @http.route(
+        "/odoo_mcp/v1/capabilities",
+        type="http",
+        auth="mcp",
+        methods=["GET"],
+        csrf=False,
+        save_session=False,
     )
     def capabilities(self):
         request_id = self._request_id()
@@ -55,11 +89,11 @@ class OdooMcpController(http.Controller):
                 503,
                 retryable=True,
             )
-        credential, response = self._authenticate(request_id)
+        access, response = self._access(request_id)
         if response:
             return response
         body, status = request.env["odoo.mcp.service"].execute_request(
-            credential,
+            access,
             "capabilities",
             {},
             request_id,
@@ -69,9 +103,43 @@ class OdooMcpController(http.Controller):
         return self._response(body, status)
 
     @http.route(
+        "/odoo_mcp/v1/events/ticket",
+        type="http",
+        auth="mcp",
+        methods=["POST"],
+        csrf=False,
+        save_session=False,
+    )
+    def event_ticket(self):
+        request_id = self._request_id()
+        if not self._enabled():
+            return self._error(
+                request_id,
+                "service_disabled",
+                "The MCP control API is disabled.",
+                503,
+                retryable=True,
+            )
+        access, response = self._access(request_id)
+        if response:
+            return response
+        token = request.env["odoo.mcp.event.ticket"].sudo()._issue(access)
+        return self._response(
+            {
+                "ok": True,
+                "request_id": request_id,
+                "data": {
+                    "ticket": token,
+                    "expires_in": request.env["odoo.mcp.event.ticket"]._ttl_seconds(),
+                },
+            },
+            201,
+        )
+
+    @http.route(
         "/odoo_mcp/v1/execute",
         type="http",
-        auth="public",
+        auth="mcp",
         methods=["POST"],
         csrf=False,
         save_session=False,
@@ -100,7 +168,7 @@ class OdooMcpController(http.Controller):
                 "The request body exceeds the configured limit.",
                 413,
             )
-        credential, response = self._authenticate(request_id)
+        access, response = self._access(request_id)
         if response:
             return response
         try:
@@ -116,7 +184,7 @@ class OdooMcpController(http.Controller):
         if not isinstance(params, dict):
             return self._error(request_id, "invalid_request", "Params must be an object.", 400)
         body, status = request.env["odoo.mcp.service"].execute_request(
-            credential,
+            access,
             operation,
             params,
             request_id,
@@ -137,36 +205,16 @@ class OdooMcpController(http.Controller):
             status = 413
         return self._response(body, status)
 
-    def _authenticate(self, request_id):
-        authorization = request.httprequest.headers.get("Authorization", "")
-        scheme, separator, token = authorization.partition(" ")
-        if not separator or scheme.lower() != "bearer" or not token:
-            return request.env["odoo.mcp.credential"], self._error(
-                request_id,
-                "authentication_required",
-                "A connector bearer token is required.",
-                401,
-                authenticate=True,
-            )
-        credential, error = request.env["odoo.mcp.credential"]._authenticate(
-            token.strip(),
-            self._remote_ip(),
-        )
+    def _access(self, request_id):
+        access, error = request.env["odoo.mcp.access"]._for_user(request.env.user)
         if error:
-            _logger.warning(
-                "MCP connector authentication rejected request_id=%s reason=%s ip=%s",
+            return access, self._error(
                 request_id,
                 error,
-                self._remote_ip(),
+                "MCP access is not available for this Odoo user.",
+                403,
             )
-            return credential, self._error(
-                request_id,
-                error,
-                "Connector authentication failed.",
-                401 if error != "ip_not_allowed" else 403,
-                authenticate=error != "ip_not_allowed",
-            )
-        return credential, False
+        return access, False
 
     def _enabled(self):
         value = request.env["ir.config_parameter"].sudo().get_param(
@@ -195,11 +243,7 @@ class OdooMcpController(http.Controller):
         status,
         *,
         retryable=False,
-        authenticate=False,
     ):
-        headers = list(SECURITY_HEADERS)
-        if authenticate:
-            headers.append(("WWW-Authenticate", 'Bearer realm="odoo-mcp-connector"'))
         return request.make_json_response(
             {
                 "ok": False,
@@ -210,7 +254,7 @@ class OdooMcpController(http.Controller):
                     "retryable": retryable,
                 },
             },
-            headers=headers,
+            headers=SECURITY_HEADERS,
             status=status,
         )
 

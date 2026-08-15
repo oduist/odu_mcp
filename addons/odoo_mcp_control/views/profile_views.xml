@@ -118,14 +118,12 @@
                                 </form>
                             </field>
                         </page>
-                        <page string="Credentials" name="credentials">
-                            <field name="credential_ids" readonly="1">
+                        <page string="User Access" name="access">
+                            <field name="access_ids" readonly="1">
                                 <list>
                                     <field name="active"/>
                                     <field name="name"/>
                                     <field name="user_id"/>
-                                    <field name="secret_hint"/>
-                                    <field name="expires_at"/>
                                     <field name="last_used_at"/>
                                 </list>
                             </field>

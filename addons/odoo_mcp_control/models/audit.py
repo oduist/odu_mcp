@@ -9,8 +9,8 @@ class OdooMcpAuditLog(models.Model):
     _rec_name = "request_id"
 
     request_id = fields.Char(required=True, readonly=True, index=True)
-    credential_id = fields.Many2one(
-        "odoo.mcp.credential",
+    access_id = fields.Many2one(
+        "odoo.mcp.access",
         ondelete="set null",
         readonly=True,
         index=True,
@@ -21,7 +21,7 @@ class OdooMcpAuditLog(models.Model):
         readonly=True,
         index=True,
     )
-    connector_user_id = fields.Many2one("res.users", ondelete="set null", readonly=True, index=True)
+    user_id = fields.Many2one("res.users", ondelete="set null", readonly=True, index=True)
     approval_id = fields.Many2one("odoo.mcp.approval", ondelete="set null", readonly=True, index=True)
     operation = fields.Char(required=True, readonly=True, index=True)
     model_name = fields.Char(readonly=True, index=True)

@@ -13,15 +13,15 @@ class OdooMcpApproval(models.Model):
     _rec_name = "request_uid"
 
     request_uid = fields.Char(required=True, default=lambda self: str(uuid.uuid4()), readonly=True, index=True)
-    credential_id = fields.Many2one(
-        "odoo.mcp.credential",
+    access_id = fields.Many2one(
+        "odoo.mcp.access",
         required=True,
         ondelete="restrict",
         readonly=True,
         index=True,
     )
-    profile_id = fields.Many2one(related="credential_id.profile_id", store=True, readonly=True)
-    connector_user_id = fields.Many2one(related="credential_id.user_id", store=True, readonly=True)
+    profile_id = fields.Many2one(related="access_id.profile_id", store=True, readonly=True)
+    user_id = fields.Many2one(related="access_id.user_id", store=True, readonly=True)
     action = fields.Selection(
         [
             ("record.create", "Create Records"),
@@ -78,8 +78,8 @@ class OdooMcpApproval(models.Model):
         "The approval request identifier must be unique.",
     )
     _idempotency_unique = models.Constraint(
-        "UNIQUE(credential_id, idempotency_key)",
-        "The idempotency key has already been used by this credential.",
+        "UNIQUE(access_id, idempotency_key)",
+        "The idempotency key has already been used by this MCP access assignment.",
     )
 
     def action_approve(self):
@@ -116,7 +116,15 @@ class OdooMcpApproval(models.Model):
             )
 
     def _system_write(self, values):
-        return super(OdooMcpApproval, self.with_context(mcp_approval_system_write=True)).write(values)
+        result = super(OdooMcpApproval, self.with_context(mcp_approval_system_write=True)).write(
+            values
+        )
+        if "state" in values:
+            for approval in self:
+                approval.access_id._publish_resource_update(
+                    f"odoo://approval/{approval.request_uid}"
+                )
+        return result
 
     def write(self, values):
         if self.env.context.get("mcp_approval_system_write"):

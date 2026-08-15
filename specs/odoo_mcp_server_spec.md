@@ -1,298 +1,128 @@
-# Техническое задание: MCP-сервер `odoo-agent-mcp`
-
-Статус: утверждённая спецификация реализации 1.0
+# Odoo Agent MCP Sidecar Specification
 
-Runtime: Python 3.11–3.13
+## Scope And Deployment
 
-MCP SDK: стабильная ветка 1.x, exact pin; переход на 2.x только после стабильного релиза и отдельной compatibility-проверки
+The sidecar is an HTTP-only MCP server built on exact FastMCP `4.0.0b3` and MCP
+SDK v2. It runs as exactly one replica. Distributed state, Redis, sticky
+sessions, and distributed locks are outside scope.
 
-Лицензия реализации: Apache-2.0
-
-Роль: client-facing MCP protocol plane
+The sidecar owns protocol concerns and never accesses the Odoo database or ORM.
+Odoo remains authoritative for identity, authorization, profiles, approvals,
+execution, and audit.
 
-## 1. Назначение
+## Transport
 
-Сервер публикует Odoo AI-агентам через Model Context Protocol, преобразуя MCP tools/resources/prompts в защищённые запросы к модулю `odoo_mcp_control`.
+- Streamable HTTP is served at `/mcp`.
+- The server runs with stateless HTTP and JSON responses where allowed by MCP.
+- `subscriptions/listen` remains an SSE streaming response as required by the
+  2026-07-28 protocol.
+- `/healthz` is local liveness.
+- `/readyz` calls Odoo's public health route.
 
-Сервер не обходит и не дублирует Odoo security. Все решения о доступе к данным и выполнение изменений остаются внутри Odoo-модуля. Сервер отвечает за:
+## Authentication And Identity
 
-- MCP lifecycle и transports;
-- client authentication;
-- tool/resource/prompt schemas;
-- нормализацию ошибок;
-- выбор task-oriented tool profile;
-- approval UX;
-- retries только для безопасных/idempotent операций;
-- observability и production packaging.
-
-## 2. Принципы
-
-1. Официальный MCP SDK, без собственной реализации протокола.
-2. Streamable HTTP — production transport; stdio — локальный transport.
-3. Stateless HTTP и JSON responses по умолчанию.
-4. Token passthrough в Odoo запрещён: MCP client token и Odoo connector key — разные credentials.
-5. Generic read core небольшой; domain packs подключаются конфигурацией.
-6. Mutating tools никогда не вызывают прямой write: только preview/approval/execute.
-7. Tool output structured, ограничен по объёму и пригоден для следующего вызова.
-8. Никаких YOLO/admin режимов.
-9. Developer/CI tools не входят в business server process.
-
-## 3. Границы продукта
-
-### Входит
-
-- MCP initialize/ping/tools/resources/prompts;
-- stdio и Streamable HTTP;
-- health/readiness;
-- bearer token resource-server mode;
-- optional external OAuth/OIDC issuer с RFC 9728 metadata;
-- Odoo connector client с pool, timeouts и safe retries;
-- generic ERP tools;
-- высокоценные domain summaries;
-- profiles/tool groups;
-- resources и prompts;
-- approval workflow;
-- JSON logging, metrics hooks и correlation IDs;
-- Dockerfile, sample configuration и tests.
+The MCP bearer token is a user-created, `mcp`-scoped Odoo API key.
 
-### Не входит
+1. The verifier calls `GET /odoo_mcp/v1/identity` with that bearer.
+2. Odoo returns the effective database, user, and profile.
+3. The verifier creates a FastMCP access token whose subject is
+   `odoo:<database>:<user_id>`.
+4. Successful identities may be cached briefly by SHA-256 token digest.
+5. Each tool/resource call forwards the current raw bearer only in that
+   request's Odoo `Authorization` header.
 
-- собственный password login;
-- встроенное хранение пользователей;
-- выдача Odoo credentials клиенту;
-- raw XML-RPC/JSON-2 наружу;
-- SQL/Python/shell/module editing;
-- production deployment/CI orchestration;
-- автоматическое подтверждение high-risk операций.
+The shared Odoo `httpx.AsyncClient` has no authorization header. The raw key is
+not logged or placed in global state.
 
-## 4. Конфигурация
+## Tool Contract
 
-Environment variables с префиксом `ODOO_MCP_`:
+Core tools expose server identity, current identity, model discovery, schema,
+search, read, count, aggregate, approval status, and approved execution.
 
-- `ODOO_URL`;
-- `ODOO_CONNECTOR_TOKEN`;
-- `TRANSPORT=stdio|streamable-http`;
-- `HOST`, `PORT`, `MCP_PATH`;
-- `REQUEST_TIMEOUT_SECONDS`;
-- `VERIFY_TLS`;
-- `MAX_RESPONSE_BYTES`;
-- `TOOL_GROUPS=core,sales,...`;
-- `LOG_LEVEL`, `LOG_FORMAT`;
-- `AUTH_MODE=none|static-token|oauth`;
-- `STATIC_TOKENS` для локального/server-to-server режима;
-- `OAUTH_ISSUER_URL`, `RESOURCE_SERVER_URL`, `REQUIRED_SCOPES`;
-- `OTEL_*` optional.
+Optional groups expose preview tools for writes/collaboration/documents and
+bounded read-only summaries for sales, accounting, inventory, projects, and HR.
+There is no generic ORM tool, arbitrary method tool, force parameter, or caller
+supplied Odoo user/profile.
 
-Secrets читаются только из environment/secret manager и не входят в diagnostics.
+Resources:
 
-## 5. MCP transports и auth
+- `odoo://server/capabilities`
+- `odoo://model/{model}/schema`
+- `odoo://record/{model}/{record_id}`
+- `odoo://approval/{approval_id}`
 
-### Stdio
+Prompts teach evidence-based reads and the preview/approve/execute workflow.
 
-- Для локального single-user клиента.
-- Auth MCP transport не требуется; Odoo connector token остаётся secret process.
-- В stdout только MCP frames, логи только stderr.
+## Concurrency
 
-### Streamable HTTP
+The instructions tell clients not to invoke tools concurrently for the same
+Odoo identity, but correctness does not rely on that instruction. The runtime
+uses a per-subject semaphore with a bounded wait. Different users can run in
+parallel; operations for one user are serialized.
 
-- Stateless HTTP, JSON response.
-- Default endpoint `/mcp`.
-- `/healthz` и `/readyz`.
-- В production обязательно client auth.
+## Retry And Circuit Breaker
 
-### OAuth/resource server
+Only read-only/idempotent operations are retried. Mutations are attempted once.
 
-- Использовать `TokenVerifier` официального SDK.
-- Публиковать RFC 9728 Protected Resource Metadata.
-- Валидировать issuer, signature, expiration, audience/resource и scopes.
-- Не принимать token, выпущенный только для Odoo или другого resource.
-- DCR/authorization UI не реализовывать внутри business MCP: подключать внешний стандартный Authorization Server.
+The global Odoo transport breaker has closed, open, and half-open states:
 
-### Static token
+- only network errors and HTTP 502/503/504 increment failures;
+- HTTP 4xx, quota/policy errors, invalid inputs, and response-size errors do not
+  increment the breaker;
+- after the threshold it opens for the configured reset interval;
+- after the interval exactly one half-open probe is admitted;
+- probe success closes the breaker; probe failure reopens it.
 
-- Допустим для controlled server-to-server и development.
-- Хранить только SHA-256 digests в конфигурации.
-- Constant-time comparison.
-- Для HTTP mode `none` запрещён, если host не loopback.
+Generation tracking prevents old in-flight requests from incorrectly closing a
+newly opened circuit.
 
-## 6. Odoo connector client
+## Subscriptions
 
-- `httpx.AsyncClient`, keep-alive pool.
-- `Authorization: Bearer <connector token>`.
-- Уникальный `X-Request-ID` на каждый tool call.
-- Timeout connect/read/write/pool.
-- Safe retries для health, capabilities и read operations при connect/502/503/504.
-- Никогда не retry `changes.preview` или `changes.execute` без idempotency key.
-- Ограничить размер входного Odoo response до `MAX_RESPONSE_BYTES`.
-- Нормализовать Odoo error envelope в typed exceptions.
-- Circuit breaker после повторяющихся transport failures.
+After successful identity verification, an in-process watcher is ensured for
+the subject:
 
-## 7. Tool groups
+1. It uses the raw key once to mint an Odoo event ticket.
+2. It clears its raw-key reference.
+3. It opens Odoo's event WebSocket with the event-only ticket.
+4. It bounds every WebSocket connection by the configured refresh interval.
+5. It stops when the ticket reaches its absolute expiry; a later authenticated
+   MCP request may create a watcher with a new ticket.
+6. It validates and deduplicates `(subject, URI, version)` events.
+7. It publishes a standard MCP `ResourceUpdated` event only on that subject's
+   in-process subscription bus.
 
-### `core`, включён всегда
+FastMCP v4 beta does not currently expose the MCP SDK v2 subscription bus via a
+public high-level method. One isolated adapter installs SDK `ListenHandler` on
+the FastMCP low-level server and selects an SDK in-memory bus by authenticated
+Odoo subject. This adapter must remain covered by an HTTP end-to-end isolation
+test and should be removed when FastMCP provides a public equivalent.
 
-- `odoo_server_info`;
-- `odoo_whoami`;
-- `odoo_list_models`;
-- `odoo_describe_model`;
-- `odoo_search_records`;
-- `odoo_get_record`;
-- `odoo_count_records`;
-- `odoo_aggregate_records`;
-- `odoo_get_change_status`;
-- `odoo_execute_approved_change`.
-
-### `write`, выключен по умолчанию
-
-- `odoo_preview_create`;
-- `odoo_preview_update`;
-- `odoo_preview_delete`;
-- `odoo_preview_method`;
-
-Каждый возвращает plan/approval ID, risk, summary, exact target count, redacted diff, expiry и следующий шаг. Выполнение отдельным tool не принимает новый payload — только approval ID.
-
-### `collaboration`
-
-- `odoo_preview_post_message`;
-- `odoo_preview_schedule_activity`.
-
-### `documents`
-
-- `odoo_read_attachment`;
-- `odoo_preview_upload_attachment`;
-- `odoo_render_report`.
-
-### Domain summaries
-
-- `sales`: pipeline/sales snapshot;
-- `accounting`: receivables aging summary;
-- `inventory`: low-stock/risk snapshot;
-- `projects`: project/task status;
-- `hr`: absence overview, только если Odoo policy разрешает модели.
-
-Domain tools строятся из generic read/aggregate operations и поэтому автоматически наследуют forced domains и ACL.
-
-## 8. Resources
-
-- `odoo://model/{model}/schema`;
-- `odoo://record/{model}/{id}`;
-- `odoo://search/{model}?domain=...`;
-- `odoo://approval/{approval_id}`;
-- `odoo://server/capabilities`.
-
-Resource templates не должны обходить tool policy. Binary content возвращается только explicit attachment resource/tool и с size limit.
-
-## 9. Prompts
-
-- `analyze_records`;
-- `summarize_record`;
-- `draft_followup`;
-- `prepare_change_plan`;
-- `investigate_access_denial`;
-- `sales_review`;
-- `receivables_review`;
-- `inventory_risk_review`;
-- `project_status_review`.
-
-Prompts не содержат credentials и не обещают агенту недоступные tools. В prompt явно указано: не считать preview выполненным изменением.
-
-## 10. Tool schemas и результаты
-
-- Pydantic/type-hint schemas.
-- Model name pattern: `^[a-zA-Z0-9_.]+$`.
-- IDs: positive integers, max batch.
-- Domain: JSON list, без Python expression.
-- Fields/order/groupby проходят локальную базовую проверку; окончательная проверка в Odoo.
-- Structured result всегда содержит `request_id`.
-- Pagination metadata: offset, limit, returned, has_more.
-- Ошибка не маскируется под успешный text result.
-
-## 11. Domain summaries
-
-Domain tools должны:
-
-- сначала проверить наличие/доступность нужной модели;
-- корректно работать при отсутствующем Enterprise/optional module;
-- учитывать company/currency/timezone из Odoo identity;
-- предупреждать о mixed currencies;
-- возвращать использованный date range и filters;
-- не делать write.
-
-## 12. Approval UX
-
-Preview result:
-
-```json
-{
-  "approval_id": "uuid",
-  "state": "pending",
-  "risk_level": "high",
-  "summary": "Delete 2 records from crm.lead",
-  "target_count": 2,
-  "diff": [],
-  "expires_at": "...",
-  "next_step": "Approve this plan in Odoo, then call odoo_execute_approved_change."
-}
-```
-
-`odoo_execute_approved_change`:
-
-- принимает только `approval_id`;
-- pending/rejected/expired возвращает typed state, не повторяет preview;
-- executed возвращает сохранённый результат;
-- не имеет `force` параметра.
-
-## 13. Надёжность
-
-- Async I/O, connection pooling.
-- Exponential backoff с jitter только для safe reads.
-- Circuit breaker states closed/open/half-open.
-- Request cancellation передаётся HTTP client.
-- Server не кэширует business records.
-- Кэш capabilities/schema короткий, ключ включает Odoo profile identity.
-- Graceful shutdown закрывает pool.
-
-## 14. Наблюдаемость
-
-- JSON logs в production.
-- Поля: timestamp, level, request_id, MCP method/tool, duration, outcome, Odoo error code.
-- Redaction Authorization, connector token, binary и values.
-- Health не раскрывает URL credentials/database.
-- Optional OpenTelemetry traces/metrics hooks.
-- Метрики: calls, errors, latency, approval states, connector circuit state.
-
-## 15. Packaging
-
-- `pyproject.toml`, exact MCP SDK pin, lockfile.
-- CLI `odoo-agent-mcp`.
-- Non-root multi-stage Docker image.
-- `.env.example` без секретов.
-- `docker-compose.example.yml`.
-- README с Claude/Codex/Inspector примерами.
-- Configuration validation до запуска.
-
-## 16. Тесты
-
-- Unit: config, schemas, redaction, token verifier, circuit breaker.
-- Client: request headers, timeouts, error mapping, response size, safe retry.
-- Tools: exact mapping tool → Odoo operation.
-- Approval: preview/status/execute and no force.
-- Domain packs: missing model, mixed currency, date filters.
-- MCP contract: initialize/list tools/call tool/list resources/get resource/list prompts.
-- HTTP auth: 401 metadata, invalid audience/scope/token.
-- Stdio smoke test.
-- Docker health.
-- End-to-end с Odoo 19 module.
-
-## 17. Критерии приёмки
-
-1. Сервер стартует в stdio и Streamable HTTP.
-2. MCP Inspector успешно выполняет initialize, list и read tool.
-3. HTTP без auth в non-loopback production configuration не стартует.
-4. Client token никогда не пересылается в Odoo.
-5. Read tools соблюдают policy/ACL, подтверждённые Odoo.
-6. Mutation невозможно выполнить, передав payload напрямую.
-7. Повтор execution безопасен и не создаёт дубликат.
-8. Odoo transport error не раскрывает secret/traceback.
-9. Unit, MCP contract и end-to-end tests проходят.
-10. Документация позволяет развернуть продукт без чтения исходников.
+MCP notifications contain only the resource URI. The version is used internally
+for deduplication; clients re-read the resource for current authorized state.
+
+## Configuration
+
+All variables use the `ODOO_MCP_` prefix. Required: `ODOO_URL`. Optional:
+`PUBLIC_URL`, `HOST`, `PORT`, `MCP_PATH`, request and size limits, tool groups,
+logging, identity-cache TTL, per-user wait timeout, retry count, breaker
+threshold/reset, and event enable/refresh settings.
+
+There are no transport-selection, connector-secret, static-token, or JWT/OAuth
+resource-server settings.
+
+## Verification
+
+The automated suite must cover:
+
+- Odoo identity verification, invalid keys, and cache behavior;
+- bearer forwarding without cross-user leakage;
+- per-user serialization and cross-user parallelism;
+- safe retries and non-retried mutations;
+- breaker exclusions, opening, and one half-open probe;
+- component registration and health/readiness routes;
+- real HTTP MCP sessions for two users;
+- preview, cross-user denial, approval, and execute flow;
+- Odoo event parsing, version deduplication, and event-ticket minting;
+- real HTTP `subscriptions/listen` delivery.
+
+No stdio test or implementation is permitted.

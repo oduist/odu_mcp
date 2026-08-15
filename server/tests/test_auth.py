@@ -1,97 +1,92 @@
 from __future__ import annotations
 
-import hashlib
-import time
-
 import httpx
-import jwt
 import pytest
-from cryptography.hazmat.primitives.asymmetric import rsa
 
-from odoo_agent_mcp.auth import JwtTokenVerifier, StaticTokenVerifier
+from odoo_agent_mcp.auth import OdooApiKeyVerifier
 from odoo_agent_mcp.config import Settings
 
 
-@pytest.mark.asyncio
-async def test_static_token_verifier_uses_digest_and_constant_scope() -> None:
-    token = "client-secret"
-    settings = Settings(
-        odoo_url="https://odoo.example.test",
-        connector_token="connector-secret",
-        static_token_digests=frozenset({hashlib.sha256(token.encode()).hexdigest()}),
-        required_scopes=("odoo:read", "odoo:write"),
-    )
-    verifier = StaticTokenVerifier(settings)
-
-    accepted = await verifier.verify_token(token)
-
-    assert accepted is not None
-    assert accepted.scopes == ["odoo:read", "odoo:write"]
-    assert await verifier.verify_token("wrong") is None
+def _settings(**overrides: object) -> Settings:
+    values: dict[str, object] = {
+        "odoo_url": "https://odoo.example.test",
+        "public_url": "https://mcp.example.test",
+        "identity_cache_seconds": 30,
+        "events_enabled": False,
+    }
+    values.update(overrides)
+    return Settings(**values)
 
 
 @pytest.mark.asyncio
-async def test_jwt_verifier_checks_signature_issuer_audience_and_scope() -> None:
-    issuer = "https://identity.example.test"
-    audience = "https://mcp.example.test"
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    public_jwk = jwt.algorithms.RSAAlgorithm.to_jwk(
-        private_key.public_key(),
-        as_dict=True,
-    )
-    public_jwk.update({"kid": "key-1", "use": "sig", "alg": "RS256"})
+async def test_verifier_resolves_odoo_identity_and_caches_by_token_digest() -> None:
+    requests = 0
+    verified: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("openid-configuration"):
-            return httpx.Response(
-                200,
-                json={"jwks_uri": f"{issuer}/jwks"},
-                request=request,
-            )
+        nonlocal requests
+        requests += 1
+        assert request.headers["Authorization"] == "Bearer user-key"
         return httpx.Response(
             200,
-            json={"keys": [public_jwk]},
+            json={
+                "ok": True,
+                "data": {
+                    "database": "prod",
+                    "user_id": 42,
+                    "login": "agent@example.test",
+                    "profile": "sales",
+                },
+            },
             request=request,
         )
 
-    settings = Settings(
-        odoo_url="https://odoo.example.test",
-        connector_token="connector-secret",
-        auth_mode="oauth",
-        oauth_issuer_url=issuer,
-        resource_server_url=audience,
-        oauth_audience=audience,
-        required_scopes=("odoo:read",),
-    )
-    verifier = JwtTokenVerifier(settings, transport=httpx.MockTransport(handler))
-    now = int(time.time())
-    claims = {
-        "iss": issuer,
-        "aud": audience,
-        "sub": "agent-42",
-        "client_id": "client-42",
-        "iat": now,
-        "exp": now + 300,
-        "scope": "odoo:read profile",
-    }
-    token = jwt.encode(
-        claims,
-        private_key,
-        algorithm="RS256",
-        headers={"kid": "key-1"},
-    )
-    wrong_scope = jwt.encode(
-        {**claims, "scope": "profile"},
-        private_key,
-        algorithm="RS256",
-        headers={"kid": "key-1"},
-    )
+    async def on_verified(token) -> None:
+        verified.append(token.subject)
 
+    verifier = OdooApiKeyVerifier(
+        _settings(),
+        transport=httpx.MockTransport(handler),
+        on_verified=on_verified,
+    )
     try:
-        accepted = await verifier.verify_token(token)
-        assert accepted is not None
-        assert accepted.client_id == "client-42"
-        assert accepted.subject == "agent-42"
-        assert await verifier.verify_token(wrong_scope) is None
+        first = await verifier.verify_token("user-key")
+        second = await verifier.verify_token("user-key")
+    finally:
+        await verifier.aclose()
+
+    assert first is second
+    assert first is not None
+    assert first.client_id == "odoo:prod:42"
+    assert first.subject == "odoo:prod:42"
+    assert first.scopes == ["mcp"]
+    assert first.claims["profile"] == "sales"
+    assert requests == 1
+    assert verified == ["odoo:prod:42", "odoo:prod:42"]
+    assert "user-key" not in verifier._cache
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 403])
+async def test_verifier_rejects_invalid_or_unassigned_keys(status: int) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json={"ok": False}, request=request)
+
+    verifier = OdooApiKeyVerifier(_settings(), transport=httpx.MockTransport(handler))
+    try:
+        assert await verifier.verify_token("invalid") is None
+    finally:
+        await verifier.aclose()
+
+
+@pytest.mark.asyncio
+async def test_verifier_surfaces_odoo_outage_as_upstream_failure() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, json={"ok": False}, request=request)
+
+    verifier = OdooApiKeyVerifier(_settings(), transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(httpx.HTTPStatusError):
+            await verifier.verify_token("user-key")
     finally:
         await verifier.aclose()

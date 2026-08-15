@@ -5,9 +5,10 @@ access_mcp_model_policy_auditor,odoo.mcp.model.policy auditor,model_odoo_mcp_mod
 access_mcp_model_policy_manager,odoo.mcp.model.policy manager,model_odoo_mcp_model_policy,group_mcp_manager,1,1,1,1
 access_mcp_method_policy_auditor,odoo.mcp.method.policy auditor,model_odoo_mcp_method_policy,group_mcp_auditor,1,0,0,0
 access_mcp_method_policy_manager,odoo.mcp.method.policy manager,model_odoo_mcp_method_policy,group_mcp_manager,1,1,1,1
-access_mcp_credential_auditor,odoo.mcp.credential auditor,model_odoo_mcp_credential,group_mcp_auditor,1,0,0,0
-access_mcp_credential_manager,odoo.mcp.credential manager,model_odoo_mcp_credential,group_mcp_manager,1,1,1,1
+access_mcp_access_auditor,odoo.mcp.access auditor,model_odoo_mcp_access,group_mcp_auditor,1,0,0,0
+access_mcp_access_manager,odoo.mcp.access manager,model_odoo_mcp_access,group_mcp_manager,1,1,1,1
 access_mcp_approval_auditor,odoo.mcp.approval auditor,model_odoo_mcp_approval,group_mcp_auditor,1,0,0,0
 access_mcp_approval_manager,odoo.mcp.approval manager,model_odoo_mcp_approval,group_mcp_manager,1,1,0,0
 access_mcp_audit_auditor,odoo.mcp.audit.log auditor,model_odoo_mcp_audit_log,group_mcp_auditor,1,0,0,0
 access_mcp_audit_manager,odoo.mcp.audit.log manager,model_odoo_mcp_audit_log,group_mcp_manager,1,0,0,0
+access_mcp_event_ticket_system,odoo.mcp.event.ticket system,model_odoo_mcp_event_ticket,base.group_system,1,0,0,0
