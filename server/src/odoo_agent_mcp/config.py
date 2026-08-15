@@ -54,7 +54,6 @@ def _bool(name: str, default: bool) -> bool:
 class Settings:
     odoo_url: str
     events_url: str = ""
-    public_url: str = ""
     host: str = "127.0.0.1"
     port: int = 8000
     mcp_path: str = "/mcp"
@@ -84,7 +83,6 @@ class Settings:
         settings = cls(
             odoo_url=_env("ODOO_URL"),
             events_url=_env("EVENTS_URL"),
-            public_url=_env("PUBLIC_URL"),
             host=_env("HOST", "127.0.0.1"),
             port=_int("PORT", 8000, minimum=1, maximum=65535),
             mcp_path=_env("MCP_PATH", "/mcp"),
@@ -148,9 +146,5 @@ class Settings:
             events = urlparse(self.events_url)
             if events.scheme not in {"ws", "wss"} or not events.netloc:
                 raise ConfigurationError("ODOO_MCP_EVENTS_URL must be an absolute WS(S) URL.")
-        if self.public_url:
-            public = urlparse(self.public_url)
-            if public.scheme not in {"http", "https"} or not public.netloc:
-                raise ConfigurationError("ODOO_MCP_PUBLIC_URL must be an absolute HTTP(S) URL.")
         if not self.mcp_path.startswith("/"):
             raise ConfigurationError("ODOO_MCP_MCP_PATH must start with '/'.")

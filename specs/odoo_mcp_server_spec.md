@@ -103,7 +103,7 @@ for deduplication; clients re-read the resource for current authorized state.
 ## Configuration
 
 All variables use the `ODOO_MCP_` prefix. Required: `ODOO_URL`. Optional:
-`PUBLIC_URL`, `HOST`, `PORT`, `MCP_PATH`, request and size limits, tool groups,
+`HOST`, `PORT`, `MCP_PATH`, request and size limits, tool groups,
 logging, identity-cache TTL, per-user wait timeout, retry count, breaker
 threshold/reset, and event enable/refresh settings.
 

@@ -10,7 +10,6 @@ def _base_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in (
         "ODOO_URL",
         "EVENTS_URL",
-        "PUBLIC_URL",
         "HOST",
         "PORT",
         "MCP_PATH",
@@ -24,7 +23,6 @@ def _base_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_from_env_builds_http_only_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     _base_env(monkeypatch)
-    monkeypatch.setenv("ODOO_MCP_PUBLIC_URL", "https://mcp.example.test")
     monkeypatch.setenv("ODOO_MCP_EVENTS_URL", "wss://events.example.test/odoo_mcp/v1/events")
     monkeypatch.setenv("ODOO_MCP_TOOL_GROUPS", "write,sales")
     monkeypatch.setenv("ODOO_MCP_EVENTS_ENABLED", "false")
@@ -32,16 +30,13 @@ def test_from_env_builds_http_only_settings(monkeypatch: pytest.MonkeyPatch) -> 
     settings = Settings.from_env()
 
     assert settings.tool_groups == frozenset({"core", "write", "sales"})
-    assert settings.public_url == "https://mcp.example.test"
     assert settings.events_url == "wss://events.example.test/odoo_mcp/v1/events"
     assert settings.events_enabled is False
     assert not hasattr(settings, "transport")
 
 
-@pytest.mark.parametrize("field", ["odoo_url", "public_url"])
-def test_rejects_non_http_urls(field: str) -> None:
-    values = {"odoo_url": "https://odoo.example.test", field: "file:///tmp/odoo"}
-    settings = Settings(**values)
+def test_rejects_non_http_odoo_url() -> None:
+    settings = Settings(odoo_url="file:///tmp/odoo")
 
     with pytest.raises(ConfigurationError, match="absolute HTTP"):
         settings.validate()

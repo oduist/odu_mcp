@@ -202,7 +202,6 @@ docker run -d \
   --security-opt no-new-privileges:true \
   -p 127.0.0.1:8000:8000 \
   -e ODOO_MCP_ODOO_URL=https://odoo.example.com \
-  -e ODOO_MCP_PUBLIC_URL=https://mcp.example.com \
   -e ODOO_MCP_HOST=0.0.0.0 \
   -e ODOO_MCP_TOOL_GROUPS=core,write \
   registry.example.com/odoo-agent-mcp:1.0.0
@@ -217,7 +216,6 @@ subscription buses намеренно рассчитаны на один про�
 | --- | --- |
 | `ODOO_MCP_ODOO_URL` | Публичный HTTPS URL Odoo для control API |
 | `ODOO_MCP_EVENTS_URL` | Отдельный `ws://` или `wss://` URL evented worker, если основной proxy не маршрутизирует WebSocket |
-| `ODOO_MCP_PUBLIC_URL` | Публичный URL MCP endpoint |
 | `ODOO_MCP_HOST` | `0.0.0.0` внутри контейнера |
 | `ODOO_MCP_PORT` | `8000` |
 | `ODOO_MCP_MCP_PATH` | `/mcp` |

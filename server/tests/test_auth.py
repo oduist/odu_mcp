@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 import httpx
 import pytest
 
@@ -10,7 +12,6 @@ from odoo_agent_mcp.config import Settings
 def _settings(**overrides: object) -> Settings:
     values: dict[str, object] = {
         "odoo_url": "https://odoo.example.test",
-        "public_url": "https://mcp.example.test",
         "identity_cache_seconds": 30,
         "events_enabled": False,
     }
@@ -55,8 +56,10 @@ async def test_verifier_resolves_odoo_identity_and_caches_by_token_digest() -> N
     finally:
         await verifier.aclose()
 
-    assert first is second
+    assert first is not second
     assert first is not None
+    assert second is not None
+    assert first.token == second.token == "user-key"
     assert first.client_id == "odoo:prod:42"
     assert first.subject == "odoo:prod:42"
     assert first.scopes == ["mcp"]
@@ -64,6 +67,48 @@ async def test_verifier_resolves_odoo_identity_and_caches_by_token_digest() -> N
     assert requests == 1
     assert verified == ["odoo:prod:42", "odoo:prod:42"]
     assert "user-key" not in verifier._cache
+    cached = next(iter(verifier._cache.values()))
+    assert not hasattr(cached, "access_token")
+    assert "user-key" not in repr(cached)
+
+
+@pytest.mark.asyncio
+async def test_verifier_prunes_expired_identities_when_a_different_key_is_used() -> None:
+    requests: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        token = request.headers["Authorization"].removeprefix("Bearer ")
+        requests.append(token)
+        user_id = 1 if token == "first-key" else 2
+        return httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "data": {
+                    "database": "prod",
+                    "user_id": user_id,
+                    "login": f"user-{user_id}@example.test",
+                    "profile": "sales",
+                },
+            },
+            request=request,
+        )
+
+    verifier = OdooApiKeyVerifier(_settings(), transport=httpx.MockTransport(handler))
+    try:
+        await verifier.verify_token("first-key")
+        first_digest = hashlib.sha256(b"first-key").hexdigest()
+        verifier._cache[first_digest].expires_at = 0
+
+        second = await verifier.verify_token("second-key")
+    finally:
+        await verifier.aclose()
+
+    assert second is not None
+    assert second.subject == "odoo:prod:2"
+    assert first_digest not in verifier._cache
+    assert len(verifier._cache) == 1
+    assert requests == ["first-key", "second-key"]
 
 
 @pytest.mark.asyncio

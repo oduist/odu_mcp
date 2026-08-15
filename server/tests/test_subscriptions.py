@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from contextlib import asynccontextmanager
 
 import httpx
 import pytest
@@ -11,7 +12,7 @@ from fastmcp.server.auth import AccessToken
 from mcp.shared.subscriptions import ResourceUpdated
 
 from odoo_agent_mcp.config import Settings
-from odoo_agent_mcp.subscriptions import OdooEventBridge, SubscriptionPublisher
+from odoo_agent_mcp.subscriptions import EventTicket, OdooEventBridge, SubscriptionPublisher
 
 
 def _settings(**overrides: object) -> Settings:
@@ -53,6 +54,8 @@ async def test_fastmcp_subscription_adapter_registers_and_publishes() -> None:
 
     assert "subscriptions/listen" in server._mcp_server._request_handlers
     assert events == [ResourceUpdated(uri="odoo://approval/abc")]
+    assert publisher._handlers == {}
+    assert publisher._buses == {}
 
 
 @pytest.mark.asyncio
@@ -115,6 +118,47 @@ async def test_event_bridge_mints_ticket_and_filters_deduplicated_events() -> No
 
 
 @pytest.mark.asyncio
+async def test_event_watcher_mints_one_ticket_clears_key_and_stops_at_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bridge = OdooEventBridge(_settings(), SubscriptionPublisher())
+    minted_with: list[str] = []
+    websocket_ready = asyncio.Event()
+
+    async def mint_ticket(bearer_token: str):
+        minted_with.append(bearer_token)
+        return EventTicket(token="event-ticket", expires_at=time.monotonic() + 0.2)
+
+    class FakeWebSocket:
+        async def send(self, _message: str) -> None:
+            websocket_ready.set()
+
+        async def recv(self) -> str:
+            await asyncio.Event().wait()
+            raise AssertionError("unreachable")
+
+    @asynccontextmanager
+    async def fake_connect(*_args, **_kwargs):
+        yield FakeWebSocket()
+
+    monkeypatch.setattr("odoo_agent_mcp.subscriptions.connect", fake_connect)
+    bridge._mint_ticket = mint_ticket  # type: ignore[method-assign]
+    task = asyncio.create_task(bridge._watch("odoo:prod:7", "odoo-key"))
+    try:
+        await asyncio.wait_for(websocket_ready.wait(), timeout=1)
+        frame = task.get_coro().cr_frame
+        assert frame is not None
+        assert "bearer_token" not in frame.f_locals
+        await asyncio.wait_for(task, timeout=1)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        await bridge.aclose()
+
+    assert minted_with == ["odoo-key"]
+
+
+@pytest.mark.asyncio
 async def test_event_watcher_lifetime_follows_active_subscriptions() -> None:
     publisher = SubscriptionPublisher()
     bridge = OdooEventBridge(_settings(), publisher)
@@ -125,6 +169,10 @@ async def test_event_watcher_lifetime_follows_active_subscriptions() -> None:
         scopes=["mcp"],
     )
     cancelled = asyncio.Event()
+    publisher._handler("odoo:prod:7")
+    publisher._handler("odoo:prod:8")
+    bridge._versions[("odoo:prod:7", "odoo://approval/abc")] = 3
+    bridge._versions[("odoo:prod:8", "odoo://approval/xyz")] = 4
 
     async def worker() -> None:
         try:
@@ -147,5 +195,16 @@ async def test_event_watcher_lifetime_follows_active_subscriptions() -> None:
             assert not cancelled.is_set()
         assert bridge._references == {}
         assert cancelled.is_set()
+        assert "odoo:prod:7" not in bridge._watchers
+        assert all(key[0] != "odoo:prod:7" for key in bridge._versions)
+        assert "odoo:prod:7" not in publisher._handlers
+        assert "odoo:prod:7" not in publisher._buses
+        assert bridge._versions == {("odoo:prod:8", "odoo://approval/xyz"): 4}
+        assert "odoo:prod:8" in publisher._handlers
+        assert "odoo:prod:8" in publisher._buses
     finally:
         await bridge.aclose()
+
+    assert bridge._versions == {}
+    assert publisher._handlers == {}
+    assert publisher._buses == {}

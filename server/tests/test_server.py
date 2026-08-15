@@ -86,6 +86,20 @@ async def test_http_health_and_readiness_routes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_auth_challenge_does_not_advertise_missing_resource_metadata() -> None:
+    server = create_server(_settings())
+    app = server.http_app(path="/mcp", stateless_http=True, json_response=True)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://mcp.test") as client:
+        response = await client.post("/mcp", json={})
+
+    assert response.status_code == 401
+    challenge = response.headers["WWW-Authenticate"]
+    assert challenge == 'Bearer scope="mcp"'
+    assert "resource_metadata" not in challenge
+
+
+@pytest.mark.asyncio
 async def test_readiness_returns_503_without_leaking_odoo_details() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(

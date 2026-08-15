@@ -75,7 +75,6 @@ Run the sidecar:
 cd server
 uv sync
 export ODOO_MCP_ODOO_URL=https://odoo.example.com
-export ODOO_MCP_PUBLIC_URL=https://mcp.example.com
 export ODOO_MCP_HOST=0.0.0.0
 uv run odoo-agent-mcp
 ```

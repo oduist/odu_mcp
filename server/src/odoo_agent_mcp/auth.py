@@ -14,8 +14,20 @@ from .config import Settings
 
 @dataclass(slots=True)
 class CachedIdentity:
-    access_token: AccessToken
+    client_id: str
+    subject: str
+    scopes: tuple[str, ...]
+    claims: dict[str, Any]
     expires_at: float
+
+    def to_access_token(self, token: str) -> AccessToken:
+        return AccessToken(
+            token=token,
+            client_id=self.client_id,
+            subject=self.subject,
+            scopes=list(self.scopes),
+            claims=dict(self.claims),
+        )
 
 
 class OdooApiKeyVerifier(TokenVerifier):
@@ -28,8 +40,7 @@ class OdooApiKeyVerifier(TokenVerifier):
         transport: httpx.AsyncBaseTransport | None = None,
         on_verified: Callable[[AccessToken], Awaitable[None]] | None = None,
     ) -> None:
-        base_url = settings.public_url or f"http://{settings.host}:{settings.port}"
-        super().__init__(base_url=base_url, required_scopes=["mcp"])
+        super().__init__(required_scopes=["mcp"])
         self.settings = settings
         self._client = httpx.AsyncClient(
             base_url=settings.odoo_url.rstrip("/"),
@@ -45,13 +56,19 @@ class OdooApiKeyVerifier(TokenVerifier):
         await self._client.aclose()
 
     async def verify_token(self, token: str) -> AccessToken | None:
+        now = time.monotonic()
+        for expired_digest in [
+            digest for digest, identity in self._cache.items() if identity.expires_at <= now
+        ]:
+            self._cache.pop(expired_digest, None)
+
         digest = hashlib.sha256(token.encode()).hexdigest()
         cached = self._cache.get(digest)
-        if cached and cached.expires_at > time.monotonic():
+        if cached:
+            access_token = cached.to_access_token(token)
             if self._on_verified:
-                await self._on_verified(cached.access_token)
-            return cached.access_token
-        self._cache.pop(digest, None)
+                await self._on_verified(access_token)
+            return access_token
 
         response = await self._client.get(
             "/odoo_mcp/v1/identity",
@@ -95,7 +112,10 @@ class OdooApiKeyVerifier(TokenVerifier):
         )
         if self.settings.identity_cache_seconds:
             self._cache[digest] = CachedIdentity(
-                access_token=access_token,
+                client_id=subject,
+                subject=subject,
+                scopes=("mcp",),
+                claims=dict(access_token.claims),
                 expires_at=time.monotonic() + self.settings.identity_cache_seconds,
             )
         if self._on_verified:

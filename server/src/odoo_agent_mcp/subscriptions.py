@@ -71,9 +71,17 @@ class SubscriptionPublisher:
             self._handlers[subject] = handler
         return handler
 
+    def remove_subject(self, subject: str) -> None:
+        handler = self._handlers.pop(subject, None)
+        if handler is not None:
+            handler.close()
+        self._buses.pop(subject, None)
+
     def close(self) -> None:
         for handler in self._handlers.values():
             handler.close()
+        self._handlers.clear()
+        self._buses.clear()
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +129,9 @@ class OdooEventBridge:
             else:
                 self._references.pop(subject, None)
                 task = self._watchers.pop(subject, None)
+                for key in [key for key in self._versions if key[0] == subject]:
+                    self._versions.pop(key, None)
+                self.publisher.remove_subject(subject)
                 if task is not None:
                     task.cancel()
                     await asyncio.gather(task, return_exceptions=True)
@@ -150,24 +161,24 @@ class OdooEventBridge:
         websocket_url = self._websocket_url()
         origin = self._origin()
         ssl_context = self._ssl_context(websocket_url)
-        while not self._closed:
-            try:
-                ticket = await self._mint_ticket(bearer_token)
-            except asyncio.CancelledError:
-                raise
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code in {401, 403}:
-                    return
-                LOGGER.info("Odoo event ticket retry for %s: %s", subject, exc)
-                await asyncio.sleep(1)
-                continue
-            except (httpx.HTTPError, ValueError) as exc:
-                LOGGER.info("Odoo event ticket retry for %s: %s", subject, exc)
-                await asyncio.sleep(1)
-                continue
+        try:
+            ticket = await self._mint_ticket(bearer_token)
+        except asyncio.CancelledError:
+            raise
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code not in {401, 403}:
+                LOGGER.info("Odoo event ticket failed for %s: %s", subject, exc)
+            return
+        except (httpx.HTTPError, ValueError) as exc:
+            LOGGER.info("Odoo event ticket failed for %s: %s", subject, exc)
+            return
+        finally:
+            del bearer_token
 
-            while not self._closed and (remaining := ticket.expires_at - time.monotonic()) > 0:
-                try:
+        while not self._closed and (remaining := ticket.expires_at - time.monotonic()) > 0:
+            try:
+                connection_lifetime = min(self.settings.event_refresh_seconds, remaining)
+                async with asyncio.timeout(connection_lifetime):
                     async with connect(
                         websocket_url,
                         origin=origin,
@@ -175,7 +186,11 @@ class OdooEventBridge:
                         user_agent_header=None,
                         proxy=None,
                         ssl=ssl_context,
-                        open_timeout=min(10.0, self.settings.request_timeout_seconds),
+                        open_timeout=min(
+                            10.0,
+                            self.settings.request_timeout_seconds,
+                            connection_lifetime,
+                        ),
                         max_size=1024 * 1024,
                     ) as websocket:
                         await websocket.send(
@@ -186,25 +201,21 @@ class OdooEventBridge:
                                 }
                             )
                         )
-                        try:
-                            async with asyncio.timeout(
-                                min(self.settings.event_refresh_seconds, remaining)
-                            ):
-                                while not self._closed:
-                                    message = await websocket.recv()
-                                    await self._handle_message(subject, message)
-                        except TimeoutError:
-                            pass
-                except asyncio.CancelledError:
-                    raise
-                except InvalidStatus as exc:
-                    if exc.response.status_code in {401, 403}:
-                        return
-                    LOGGER.info("Odoo event WebSocket reconnect for %s: %s", subject, exc)
-                    await asyncio.sleep(1)
-                except (OSError, WebSocketException) as exc:
-                    LOGGER.info("Odoo event WebSocket reconnect for %s: %s", subject, exc)
-                    await asyncio.sleep(1)
+                        while not self._closed:
+                            message = await websocket.recv()
+                            await self._handle_message(subject, message)
+            except TimeoutError:
+                pass
+            except asyncio.CancelledError:
+                raise
+            except InvalidStatus as exc:
+                if exc.response.status_code in {401, 403}:
+                    return
+                LOGGER.info("Odoo event WebSocket reconnect for %s: %s", subject, exc)
+                await asyncio.sleep(min(1.0, max(0.0, ticket.expires_at - time.monotonic())))
+            except (OSError, WebSocketException) as exc:
+                LOGGER.info("Odoo event WebSocket reconnect for %s: %s", subject, exc)
+                await asyncio.sleep(min(1.0, max(0.0, ticket.expires_at - time.monotonic())))
 
     async def _mint_ticket(self, bearer_token: str) -> EventTicket:
         response = await self._client.post(
@@ -286,5 +297,6 @@ class OdooEventBridge:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._watchers.clear()
         self._references.clear()
+        self._versions.clear()
         self.publisher.close()
         await self._client.aclose()
