@@ -1,7 +1,7 @@
-# Руководство администратора Odu MCP
+# Руководство администратора Connect MCP
 
 Документ описывает установку, настройку безопасности, эксплуатацию и
-диагностику Odu MCP для Odoo 19.
+диагностику Connect MCP для Odoo 19.
 
 ## Архитектура и границы ответственности
 
@@ -9,12 +9,12 @@
 
 ```text
 MCP client
-  | Streamable HTTP + личный Odoo MCP API key
+  | Streamable HTTP + личный Connect MCP API key
   v
 FastMCP sidecar, одна реплика
   | тот же Bearer key только в текущем запросе
   v
-Odoo module: odoo_mcp_control
+Odoo module: connect_mcp
   | Odoo user + MCP profile + ACL + record rules + companies
   v
 Odoo ORM
@@ -43,7 +43,7 @@ Sidecar не является источником бизнес-прав и не
 
 - Поддерживается только Odoo 19.
 - Поддерживаются только новые базы.
-- Если обнаружена таблица или metadata модели `odoo.mcp.credential`, установка
+- Если обнаружена таблица или metadata модели `connect.mcp.credential`, установка
   или upgrade завершаются явной ошибкой.
 - Миграция старой credential-схемы намеренно отсутствует.
 - Используется ровно одна реплика sidecar.
@@ -68,9 +68,9 @@ Sidecar не является источником бизнес-прав и не
 
 ```bash
 odoo \
-  --addons-path=/opt/odoo/addons,/opt/odu_mcp/addons \
+  --addons-path=/opt/odoo/addons,/opt/connect_addons_ng/addons \
   -d odoo_database \
-  -i odoo_mcp_control \
+  -i connect_mcp \
   --stop-after-init
 ```
 
@@ -79,12 +79,12 @@ odoo \
 Проверьте health endpoint:
 
 ```bash
-curl --fail https://odoo.example.com/odoo_mcp/v1/health
+curl --fail https://odoo.example.com/connect_mcp/v1/health
 ```
 
 ## Роли Odoo
 
-Модуль добавляет privilege **MCP Control** с двумя группами:
+Модуль добавляет privilege **Connect MCP** с двумя группами:
 
 | Группа | Возможности |
 | --- | --- |
@@ -96,7 +96,7 @@ MCP-пользователям без операционной необходи�
 
 ## Настройка Security Profile
 
-Откройте **MCP Control > Security Profiles** и создайте профиль по принципу
+Откройте **Connect MCP > Security Profiles** и создайте профиль по принципу
 default deny.
 
 ### Общие параметры
@@ -159,7 +159,7 @@ tool, если метод имеет сложные или плохо предс
 
 ## Назначение User Access
 
-Откройте **MCP Control > User Access** и создайте одно назначение:
+Откройте **Connect MCP > User Access** и создайте одно назначение:
 
 - активный внутренний пользователь Odoo;
 - один Security Profile;
@@ -175,36 +175,35 @@ API отклоняет unrestricted ключи Odoo, даже если они п
 
 ### Docker
 
-Соберите образ из каталога `server`:
+Соберите образ из каталога `addons/connect_mcp/deploy/connect_mcp_server`:
 
 ```bash
-docker build -t registry.example.com/odoo-agent-mcp:1.0.0 server
-docker push registry.example.com/odoo-agent-mcp:1.0.0
+docker build \
+  -t oduist/connect_mcp_server:1.0.0 \
+  addons/connect_mcp/deploy/connect_mcp_server
+docker push oduist/connect_mcp_server:1.0.0
 ```
 
-Репозиторий также содержит workflow `Publish sidecar`. При изменениях в
-`server/**` он публикует образ
-`ghcr.io/<repository-owner>/odu-mcp-sidecar:sha-<commit>` и дополнительный tag
-по имени ветки. Workflow использует repository `GITHUB_TOKEN` с минимальным
-разрешением `packages:write`; личный registry token не требуется. GHCR package
-по умолчанию остаётся private. Настройте registry credentials в deployment
-system или вручную измените package visibility в GitHub, если нужен anonymous
-pull.
+Репозиторий также содержит workflow `Publish Connect MCP server`. При изменениях в
+`addons/connect_mcp/deploy/connect_mcp_server/**` он публикует образ
+`oduist/connect_mcp_server:sha-<commit>` и дополнительный tag по имени ветки.
+Для публикации используются repository secrets `DOCKERHUB_USERNAME` и
+`DOCKERHUB_TOKEN`.
 
 Пример запуска:
 
 ```bash
 docker run -d \
-  --name odoo-agent-mcp \
+  --name connect-mcp-server \
   --read-only \
   --tmpfs /tmp:size=16m,mode=1777 \
   --cap-drop ALL \
   --security-opt no-new-privileges:true \
   -p 127.0.0.1:8000:8000 \
-  -e ODOO_MCP_ODOO_URL=https://odoo.example.com \
-  -e ODOO_MCP_HOST=0.0.0.0 \
-  -e ODOO_MCP_TOOL_GROUPS=core,write \
-  registry.example.com/odoo-agent-mcp:1.0.0
+  -e CONNECT_MCP_ODOO_URL=https://odoo.example.com \
+  -e CONNECT_MCP_HOST=0.0.0.0 \
+  -e CONNECT_MCP_TOOL_GROUPS=core,write \
+  oduist/connect_mcp_server:1.0.0
 ```
 
 Не запускайте несколько реплик. In-process user locks, watcher registry и
@@ -214,37 +213,38 @@ subscription buses намеренно рассчитаны на один про�
 
 | Переменная | Рекомендуемое значение |
 | --- | --- |
-| `ODOO_MCP_ODOO_URL` | Публичный HTTPS URL Odoo для control API |
-| `ODOO_MCP_EVENTS_URL` | Отдельный `ws://` или `wss://` URL evented worker, если основной proxy не маршрутизирует WebSocket |
-| `ODOO_MCP_HOST` | `0.0.0.0` внутри контейнера |
-| `ODOO_MCP_PORT` | `8000` |
-| `ODOO_MCP_MCP_PATH` | `/mcp` |
-| `ODOO_MCP_TOOL_GROUPS` | Минимальный набор, обычно `core`; mutation tools требуют `write` |
-| `ODOO_MCP_VERIFY_TLS` | `true` |
-| `ODOO_MCP_EVENTS_ENABLED` | `true`, если настроен evented routing |
+| `CONNECT_MCP_ODOO_URL` | Публичный HTTPS URL Odoo для control API |
+| `CONNECT_MCP_EVENTS_URL` | Отдельный `ws://` или `wss://` URL evented worker, если основной proxy не маршрутизирует WebSocket |
+| `CONNECT_MCP_HOST` | `0.0.0.0` внутри контейнера |
+| `CONNECT_MCP_PORT` | `8000` |
+| `CONNECT_MCP_MCP_PATH` | `/mcp` |
+| `CONNECT_MCP_TOOL_GROUPS` | Минимальный набор, обычно `core`; mutation tools требуют `write` |
+| `CONNECT_MCP_VERIFY_TLS` | `true` |
+| `CONNECT_MCP_EVENTS_ENABLED` | `true`, если настроен evented routing |
 
-Полный список находится в `server/.env.example` и `server/README.md`.
+Полный список находится в `addons/connect_mcp/deploy/connect_mcp_server/.env.example`
+и `addons/connect_mcp/deploy/connect_mcp_server/README.md`.
 
 ## Reverse proxy и WebSocket
 
 Обычные control API endpoints направляйте на HTTP workers Odoo. Маршрут
-`/odoo_mcp/v1/events` должен попадать на evented/gevent worker так же, как
+`/connect_mcp/v1/events` должен попадать на evented/gevent worker так же, как
 стандартный `/websocket`.
 
 Если HTTP и evented upstream доступны по разным адресам, оставьте
-`ODOO_MCP_ODOO_URL` на проверяемом HTTPS endpoint и задайте отдельный
-`ODOO_MCP_EVENTS_URL`. Например, внутри доверенной контейнерной сети:
+`CONNECT_MCP_ODOO_URL` на проверяемом HTTPS endpoint и задайте отдельный
+`CONNECT_MCP_EVENTS_URL`. Например, внутри доверенной контейнерной сети:
 
 ```dotenv
-ODOO_MCP_ODOO_URL=https://odoo.example.com
-ODOO_MCP_EVENTS_URL=ws://odoo:8072/odoo_mcp/v1/events
-ODOO_MCP_VERIFY_TLS=true
+CONNECT_MCP_ODOO_URL=https://odoo.example.com
+CONNECT_MCP_EVENTS_URL=ws://odoo:8072/connect_mcp/v1/events
+CONNECT_MCP_VERIFY_TLS=true
 ```
 
 Упрощённая схема Nginx:
 
 ```nginx
-location ~ ^/(websocket|odoo_mcp/v1/events)$ {
+location ~ ^/(websocket|connect_mcp/v1/events)$ {
     proxy_pass http://odoo_evented;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
@@ -261,13 +261,14 @@ location / {
 ```
 
 Полный пример единого edge proxy для Odoo UI, MCP endpoint и обоих WebSocket
-маршрутов находится в `server/nginx.edge.example.conf`.
+маршрутов находится в
+`addons/connect_mcp/deploy/connect_mcp_server/nginx.edge.example.conf`.
 
-Без `ODOO_MCP_EVENTS_URL` sidecar строит WebSocket URL из
-`ODOO_MCP_ODOO_URL`, поэтому HTTP и WebSocket должны быть доступны через один
+Без `CONNECT_MCP_EVENTS_URL` sidecar строит WebSocket URL из
+`CONNECT_MCP_ODOO_URL`, поэтому HTTP и WebSocket должны быть доступны через один
 внешний origin. При отдельном evented endpoint используйте явный
-`ODOO_MCP_EVENTS_URL`; для публичного `wss://` сертификат проверяется согласно
-`ODOO_MCP_VERIFY_TLS`.
+`CONNECT_MCP_EVENTS_URL`; для публичного `wss://` сертификат проверяется согласно
+`CONNECT_MCP_VERIFY_TLS`.
 
 ## Health checks
 
@@ -275,14 +276,14 @@ location / {
 | --- | --- |
 | Sidecar `/healthz` | Liveness процесса, без обращения к Odoo |
 | Sidecar `/readyz` | Проверка доступности Odoo control API |
-| Odoo `/odoo_mcp/v1/health` | Публичная доступность модуля |
+| Odoo `/connect_mcp/v1/health` | Публичная доступность модуля |
 
 Пример:
 
 ```bash
 curl --fail https://mcp.example.com/healthz
 curl --fail https://mcp.example.com/readyz
-curl --fail https://odoo.example.com/odoo_mcp/v1/health
+curl --fail https://odoo.example.com/connect_mcp/v1/health
 ```
 
 ## Circuit breaker и медленные запросы
@@ -307,7 +308,7 @@ half-open probe.
 ## Approvals и audit
 
 Approval payload после preview неизменяем. MCP Administrator может одобрить
-или отклонить план в **MCP Control > Approval Inbox**. Execute доступен только
+или отклонить план в **Connect MCP > Approval Inbox**. Execute доступен только
 для одобренного, неистёкшего плана и выполняется exactly once.
 
 Audit log содержит request ID, пользователя, профиль, operation, модель,
@@ -322,22 +323,22 @@ Audit и approvals нельзя редактировать вручную. Уд�
 Sidecar:
 
 ```bash
-cd server
+cd addons/connect_mcp/deploy/connect_mcp_server
 uv sync --extra test
 uv run ruff check src tests
 uv run ruff format --check src tests
-uv run pytest --cov=odoo_agent_mcp
+uv run pytest --cov=connect_mcp_server --cov-report=term-missing --cov-fail-under=95
 ```
 
 Odoo-модуль запускайте только на свежей тестовой базе:
 
 ```bash
 odoo \
-  --addons-path=/opt/odoo/addons,/opt/odu_mcp/addons \
-  -d odu_mcp_test \
-  -i odoo_mcp_control \
+  --addons-path=/opt/odoo/addons,/opt/connect_addons_ng/addons \
+  -d connect_addons_ng_test \
+  -i connect_mcp \
   --test-enable \
-  --test-tags=/odoo_mcp_control \
+  --test-tags=/connect_mcp \
   --stop-after-init
 ```
 
@@ -356,13 +357,13 @@ odoo \
 
 | Симптом | Проверка |
 | --- | --- |
-| Sidecar не стартует | Проверить обязательный `ODOO_MCP_ODOO_URL` и абсолютные HTTP(S) URL |
+| Sidecar не стартует | Проверить обязательный `CONNECT_MCP_ODOO_URL` и абсолютные HTTP(S) URL |
 | `/readyz` возвращает 503 | Проверить Odoo health, DNS, TLS и reverse proxy |
 | Все ключи получают 401 | Проверить установку модуля и что ключ создан как **MCP only** |
 | Ключ валиден, но получен 403 | Проверить User Access, active flags, profile и компании |
-| Tool отсутствует | Проверить `ODOO_MCP_TOOL_GROUPS` и перезапустить sidecar |
+| Tool отсутствует | Проверить `CONNECT_MCP_TOOL_GROUPS` и перезапустить sidecar |
 | Tool есть, но policy denied | Проверить model/field/method policy в Odoo |
-| Subscription не приходит | Проверить evented worker и routing `/odoo_mcp/v1/events` |
+| Subscription не приходит | Проверить evented worker и routing `/connect_mcp/v1/events` |
 | Circuit остаётся open | Устранить transport/502-504 проблему и дождаться reset interval |
 
 Не включайте debug-логирование HTTP headers на production: Bearer key приходит
@@ -370,7 +371,7 @@ odoo \
 
 ## Обновление и откат
 
-Этот релиз не обновляется поверх старой `odoo.mcp.credential` схемы. Для него
+Этот релиз не обновляется поверх старой `connect.mcp.credential` схемы. Для него
 нужна свежая база. Не удаляйте old-schema detection для принудительного
 upgrade.
 
@@ -378,7 +379,7 @@ upgrade.
 
 1. сделайте резервную копию базы и filestore;
 2. сначала разверните совместимый sidecar image;
-3. выполните `-u odoo_mcp_control`;
+3. выполните `-u connect_mcp`;
 4. проверьте health и acceptance tests;
 5. только после этого переключайте MCP traffic.
 

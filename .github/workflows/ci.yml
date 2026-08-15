@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   server:
-    name: MCP server
+    name: Connect MCP server
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -18,16 +18,16 @@ jobs:
           python-version: "3.12"
           enable-cache: true
       - name: Install locked dependencies
-        working-directory: server
+        working-directory: addons/connect_mcp/deploy/connect_mcp_server
         run: uv sync --frozen --extra test
       - name: Lint
-        working-directory: server
+        working-directory: addons/connect_mcp/deploy/connect_mcp_server
         run: |
           uv run ruff check .
           uv run ruff format --check .
       - name: Test
-        working-directory: server
-        run: uv run pytest --cov=odoo_agent_mcp --cov-report=term-missing --cov-fail-under=65
+        working-directory: addons/connect_mcp/deploy/connect_mcp_server
+        run: uv run pytest --cov=connect_mcp_server --cov-report=term-missing --cov-fail-under=95
 
   odoo-addon:
     name: Odoo 19 addon
@@ -58,9 +58,9 @@ jobs:
           -e PASSWORD=odoo
           -v "${{ github.workspace }}/addons:/mnt/extra-addons:ro"
           odoo:19.0
-          -d odu_mcp_ci
-          -i odoo_mcp_control
+          -d connect_addons_ng_ci
+          -i connect_mcp
           --test-enable
-          --test-tags=/odoo_mcp_control
+          --test-tags=/connect_mcp
           --stop-after-init
           --log-level=test

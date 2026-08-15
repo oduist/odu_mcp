@@ -7,5 +7,5 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 htmlcov/
-server/.venv/
-server/.env
+addons/connect_mcp/deploy/connect_mcp_server/.venv/
+addons/connect_mcp/deploy/connect_mcp_server/.env

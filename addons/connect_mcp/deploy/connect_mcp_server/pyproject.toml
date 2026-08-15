@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "connect-mcp-server"
+version = "1.0.0"
+description = "Security-first Model Context Protocol server for Odoo"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = "Apache-2.0"
+authors = [{ name = "Connect MCP Contributors" }]
+dependencies = [
+    "fastmcp==4.0.0b3",
+    "httpx>=0.28.1,<0.29",
+    "websockets>=17,<18",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.4,<9",
+    "pytest-asyncio>=1.1,<2",
+    "pytest-cov>=6.2,<7",
+    "respx>=0.22,<0.23",
+    "ruff>=0.12,<1",
+    "uvicorn>=0.35,<1",
+]
+
+[project.scripts]
+connect-mcp-server = "connect_mcp_server.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/connect_mcp_server"]
+
+[tool.uv]
+constraint-dependencies = ["fastmcp-slim==4.0.0b3"]
+
+[tool.pytest.ini_options]
+addopts = "-q --strict-markers"
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["connect_mcp_server"]
+
+[tool.coverage.report]
+fail_under = 95
+show_missing = true
+skip_covered = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "ASYNC", "S"]
+ignore = [
+    "S101", # Assertions are expected in tests.
+    "S311", # Retry jitter is not a security token or cryptographic value.
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S104", "S105", "S106"]

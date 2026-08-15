@@ -1,0 +1,21 @@
+services:
+  connect-mcp-server:
+    image: oduist/connect_mcp_server:latest
+    build: .
+    restart: unless-stopped
+    environment:
+      CONNECT_MCP_ODOO_URL: ${CONNECT_MCP_ODOO_URL}
+      CONNECT_MCP_EVENTS_URL: ${CONNECT_MCP_EVENTS_URL:-}
+      CONNECT_MCP_HOST: 0.0.0.0
+      CONNECT_MCP_PORT: 8000
+      CONNECT_MCP_TOOL_GROUPS: ${CONNECT_MCP_TOOL_GROUPS:-core}
+      CONNECT_MCP_EVENTS_ENABLED: ${CONNECT_MCP_EVENTS_ENABLED:-true}
+    ports:
+      - "127.0.0.1:8000:8000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
