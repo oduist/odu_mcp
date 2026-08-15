@@ -55,6 +55,10 @@ API health endpoint without using a user key.
 | `ODOO_MCP_EVENTS_ENABLED` | `true` | Enable Odoo Bus to MCP subscription bridging |
 | `ODOO_MCP_EVENT_REFRESH_SECONDS` | `240` | Maximum lifetime of one Odoo WebSocket connection |
 
+When `ODOO_MCP_EVENTS_URL` is unset, the sidecar derives
+`wss://<ODOO_MCP_ODOO_URL host>/odoo_mcp/v1/events`. A reverse proxy must send
+both `/websocket` and `/odoo_mcp/v1/events` to Odoo's evented/gevent port.
+
 The circuit breaker counts only network failures and HTTP 502/503/504. User
 401/403/429 responses, policy errors, validation errors, and oversized
 responses never open it.

@@ -246,7 +246,7 @@ ODOO_MCP_VERIFY_TLS=true
 Упрощённая схема Nginx:
 
 ```nginx
-location /odoo_mcp/v1/events {
+location ~ ^/(websocket|odoo_mcp/v1/events)$ {
     proxy_pass http://odoo_evented;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
@@ -262,8 +262,11 @@ location / {
 }
 ```
 
-Sidecar строит WebSocket URL из `ODOO_MCP_ODOO_URL`, поэтому HTTP и WebSocket
-должны быть доступны через один внешний origin.
+Без `ODOO_MCP_EVENTS_URL` sidecar строит WebSocket URL из
+`ODOO_MCP_ODOO_URL`, поэтому HTTP и WebSocket должны быть доступны через один
+внешний origin. При отдельном evented endpoint используйте явный
+`ODOO_MCP_EVENTS_URL`; для публичного `wss://` сертификат проверяется согласно
+`ODOO_MCP_VERIFY_TLS`.
 
 ## Health checks
 
