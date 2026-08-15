@@ -28,11 +28,11 @@
                         <h1><field name="name" placeholder="Read-only analyst"/></h1>
                     </div>
                     <group>
-                        <group>
+                        <group string="Profile">
                             <field name="active"/>
                             <field name="code"/>
                             <field name="company_ids" widget="many2many_tags"/>
-                            <field name="description"/>
+                            <field name="description" placeholder="Describe the intended agent role and scope..."/>
                         </group>
                         <group string="Limits">
                             <field name="max_records_per_call"/>
@@ -42,17 +42,34 @@
                             <field name="approval_ttl_minutes"/>
                         </group>
                     </group>
-                    <group string="Features" col="4">
-                        <field name="allow_schema"/>
-                        <field name="allow_aggregate"/>
-                        <field name="allow_reports"/>
-                        <field name="allow_attachments"/>
-                        <field name="allow_chatter"/>
-                        <field name="allow_activities"/>
-                        <field name="auto_approve_low_risk"/>
+                    <group>
+                        <group string="Default Model Access">
+                            <field name="default_model_access" widget="radio"/>
+                            <field name="allow_global_create"/>
+                            <field name="allow_global_unlink"/>
+                        </group>
+                        <group string="Capabilities">
+                            <group>
+                                <field name="allow_schema"/>
+                                <field name="allow_reports"/>
+                                <field name="allow_chatter"/>
+                                <field name="auto_approve_low_risk"/>
+                            </group>
+                            <group>
+                                <field name="allow_aggregate"/>
+                                <field name="allow_attachments"/>
+                                <field name="allow_activities"/>
+                            </group>
+                        </group>
                     </group>
                     <notebook>
                         <page string="Model Policies" name="model_policies">
+                            <div class="alert alert-info mb-2" role="alert">
+                                Default Model Access applies only when a model has no explicit policy.
+                                Use Model Policies for model-specific operations, fields, domains, limits,
+                                or exceptions. Odoo ACLs, record rules, field security, and the MCP safety
+                                denylist always apply.
+                            </div>
                             <field name="policy_ids" context="{'default_profile_id': id}">
                                 <list editable="bottom">
                                     <field name="active"/>

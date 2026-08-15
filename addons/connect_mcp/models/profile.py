@@ -1,4 +1,3 @@
-import ipaddress
 import json
 import re
 
@@ -9,6 +8,113 @@ from odoo.fields import Domain
 
 MODEL_NAME_RE = re.compile(r"^[a-zA-Z0-9_.]+$")
 METHOD_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*$")
+SENSITIVE_FIELD_NAME_RE = re.compile(
+    r"(password|passwd|secret|token|api.?key|private|credential|authorization)",
+    re.IGNORECASE,
+)
+BLOCKED_POLICY_MODELS = {
+    "ir.config_parameter",
+    "res.users.apikeys",
+    "connect.mcp.profile",
+    "connect.mcp.model.policy",
+    "connect.mcp.method.policy",
+    "connect.mcp.access",
+    "connect.mcp.approval",
+    "connect.mcp.audit.log",
+    "connect.mcp.event.ticket",
+}
+# Excluded from the profile-wide fallback because write access to them enables
+# code execution or privilege escalation past this policy layer. An explicit
+# Model Policy with its field allowlists can still expose them deliberately.
+GLOBAL_ACCESS_BLOCKED_MODELS = BLOCKED_POLICY_MODELS | {
+    "base.automation",
+    "ir.actions.server",
+    "ir.cron",
+    "ir.mail_server",
+    "ir.model.access",
+    "ir.rule",
+    "ir.ui.view",
+    "res.groups",
+}
+# Readable through the fallback, but never writable: mutations here change
+# group membership and therefore effective permissions.
+GLOBAL_ACCESS_READONLY_MODELS = {"res.users"}
+WRITE_MAGIC_FIELDS = {
+    "id",
+    "create_uid",
+    "create_date",
+    "write_uid",
+    "write_date",
+    "__last_update",
+    "display_name",
+}
+
+
+class GlobalModelPolicy:
+    """Policy adapter for models covered by a profile-wide access mode."""
+
+    def __init__(self, profile, model_id):
+        self.profile_id = profile
+        self.model_id = model_id
+        self.max_records = 0
+        self.allow_binary_read = False
+        self.allow_binary_write = False
+        writable = model_id.model not in GLOBAL_ACCESS_READONLY_MODELS
+        self.allow_read = profile.default_model_access in {"read", "write"}
+        self.allow_aggregate = self.allow_read and profile.allow_aggregate
+        self.allow_create = profile.allow_global_create and writable
+        self.allow_write = profile.default_model_access == "write" and writable
+        self.allow_unlink = profile.allow_global_unlink and writable
+
+    def _allows(self, operation):
+        return bool(
+            {
+                "read": self.allow_read,
+                "aggregate": self.allow_aggregate,
+                "create": self.allow_create,
+                "write": self.allow_write,
+                "unlink": self.allow_unlink,
+            }.get(operation, False)
+        )
+
+    def _operation_names(self):
+        return [
+            operation
+            for operation in ("read", "create", "write", "unlink", "aggregate")
+            if self._allows(operation)
+        ]
+
+    def _record_limit(self):
+        return self.profile_id.max_records_per_call
+
+    def _forced_domain(self):
+        return Domain([])
+
+    def _allowed_field_names(self, operation, model):
+        descriptions = model.fields_get(
+            attributes=[
+                "type",
+                "readonly",
+                "required",
+                "string",
+                "relation",
+                "selection",
+                "help",
+            ]
+        )
+        names = {
+            name
+            for name, description in descriptions.items()
+            if not SENSITIVE_FIELD_NAME_RE.search(name)
+            and description.get("type") != "binary"
+        }
+        if operation in {"create", "write"}:
+            names = {
+                name
+                for name in names
+                if name not in WRITE_MAGIC_FIELDS and not descriptions[name].get("readonly")
+            }
+        return names
 
 
 class ConnectMcpProfile(models.Model):
@@ -35,7 +141,11 @@ class ConnectMcpProfile(models.Model):
         default=0,
         help="Maximum requests per UTC day. Zero disables the separate daily quota.",
     )
-    approval_ttl_minutes = fields.Integer(default=30, required=True)
+    approval_ttl_minutes = fields.Integer(
+        string="Approval TTL Minutes",
+        default=30,
+        required=True,
+    )
     auto_approve_low_risk = fields.Boolean(
         default=False,
         help="Only low-risk collaboration actions may be auto-approved.",
@@ -46,6 +156,34 @@ class ConnectMcpProfile(models.Model):
     allow_attachments = fields.Boolean()
     allow_chatter = fields.Boolean()
     allow_activities = fields.Boolean()
+    default_model_access = fields.Selection(
+        [
+            ("explicit", "Explicit policies only"),
+            ("read", "Read any accessible model"),
+            ("write", "Read and update any accessible model"),
+        ],
+        required=True,
+        default="explicit",
+        string="Default Model Access",
+        help=(
+            "Fallback for models without an explicit Model Policy. Odoo access rights, "
+            "record rules, field security, and the MCP safety denylist still apply."
+        ),
+    )
+    allow_global_create = fields.Boolean(
+        string="Create on Any Accessible Model",
+        help=(
+            "Allow record creation on models without an explicit Model Policy when the "
+            "assigned Odoo user has create access. Changes still require approval."
+        ),
+    )
+    allow_global_unlink = fields.Boolean(
+        string="Delete from Any Accessible Model",
+        help=(
+            "Allow record deletion on models without an explicit Model Policy when the "
+            "assigned Odoo user has delete access. Deletes still require approval."
+        ),
+    )
     policy_ids = fields.One2many("connect.mcp.model.policy", "profile_id")
     method_policy_ids = fields.One2many("connect.mcp.method.policy", "profile_id")
     access_ids = fields.One2many("connect.mcp.access", "profile_id")
@@ -78,12 +216,31 @@ class ConnectMcpProfile(models.Model):
         policy = self.policy_ids.filtered(
             lambda item: item.active and item.model_id.model == model_name
         )[:1]
-        allowed = bool(policy and policy._allows(operation))
+        if policy:
+            allowed = policy._allows(operation)
+        else:
+            model_id = self.env["ir.model"].sudo()._get(model_name)
+            policy = (
+                GlobalModelPolicy(self, model_id)
+                if model_id
+                and not model_id.transient
+                and model_name not in GLOBAL_ACCESS_BLOCKED_MODELS
+                else self.env["connect.mcp.model.policy"]
+            )
+            allowed = bool(policy and policy._allows(operation))
         if required and not allowed:
             raise ValidationError(
                 _("Operation %(operation)s is not allowed on %(model)s.", operation=operation, model=model_name)
             )
         return policy if allowed else self.env["connect.mcp.model.policy"]
+
+    def _has_global_model_access(self):
+        self.ensure_one()
+        return bool(
+            self.default_model_access != "explicit"
+            or self.allow_global_create
+            or self.allow_global_unlink
+        )
 
     def _allowed_company_ids(self, user):
         self.ensure_one()
@@ -111,6 +268,9 @@ class ConnectMcpProfile(models.Model):
                 "chatter": self.allow_chatter,
                 "activities": self.allow_activities,
                 "auto_approve_low_risk": self.auto_approve_low_risk,
+                "default_model_access": self.default_model_access,
+                "create_on_any_model": self.allow_global_create,
+                "delete_from_any_model": self.allow_global_unlink,
             },
             "models": [
                 {
@@ -191,11 +351,10 @@ class ConnectMcpModelPolicy(models.Model):
 
     @api.constrains("model_id")
     def _check_model_kind(self):
-        blocked = {"ir.config_parameter", "res.users.apikeys"}
         for policy in self:
             if policy.model_id.transient:
                 raise ValidationError(_("Transient models cannot be exposed through MCP."))
-            if policy.model_id.model in blocked:
+            if policy.model_id.model in BLOCKED_POLICY_MODELS:
                 raise ValidationError(_("This security-sensitive model cannot be exposed through MCP."))
 
     @api.constrains("read_field_ids", "write_field_ids", "model_id")

@@ -201,6 +201,174 @@ class TestConnectMcp(TransactionCase):
         self.assertEqual(status, 403)
         self.assertEqual(body["error"]["code"], "field_denied")
 
+    def test_global_read_uses_odoo_access_and_safe_fields(self):
+        self.profile.default_model_access = "read"
+
+        body, status = self._request(
+            "records.search",
+            {
+                "model": "res.company",
+                "domain": [],
+                "fields": ["name"],
+                "limit": 10,
+            },
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(body["data"]["records"])
+
+        body, status = self._request(
+            "records.search",
+            {
+                "model": "res.users",
+                "domain": [["id", "=", self.mcp_user.id]],
+                "fields": ["password"],
+                "limit": 1,
+            },
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"]["code"], "field_denied")
+
+    def test_global_access_lists_user_accessible_models(self):
+        self.profile.default_model_access = "read"
+
+        body, status = self._request("models.list")
+
+        self.assertEqual(status, 200)
+        companies = [
+            item for item in body["data"]["models"] if item["model"] == "res.company"
+        ]
+        self.assertEqual(len(companies), 1)
+        self.assertIn("read", companies[0]["operations"])
+
+    def test_explicit_policy_overrides_global_access(self):
+        self.profile.default_model_access = "write"
+        company_model = self.env["ir.model"]._get("res.company")
+        self.env["connect.mcp.model.policy"].create(
+            {
+                "profile_id": self.profile.id,
+                "model_id": company_model.id,
+                "allow_read": False,
+                "allow_aggregate": False,
+            }
+        )
+
+        body, status = self._request(
+            "records.search",
+            {"model": "res.company", "domain": [], "fields": ["name"]},
+        )
+
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"]["code"], "policy_denied")
+
+    def test_global_update_allows_preview_without_model_policy(self):
+        self.policy.active = False
+        self.profile.default_model_access = "write"
+
+        body, status = self._request(
+            "changes.preview",
+            {
+                "action": "record.update",
+                "payload": {
+                    "model": "res.partner",
+                    "ids": [self.allowed_partner.id],
+                    "values": {"name": "Globally writable"},
+                },
+                "idempotency_key": "global-update-partner",
+            },
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["data"]["action"], "record.update")
+
+    def test_global_create_allows_preview_without_model_policy(self):
+        self.policy.active = False
+        self.profile.allow_global_create = True
+
+        body, status = self._request(
+            "changes.preview",
+            {
+                "action": "record.create",
+                "payload": {
+                    "model": "res.partner",
+                    "values": {"name": "Globally creatable"},
+                },
+                "idempotency_key": "global-create-partner",
+            },
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["data"]["action"], "record.create")
+
+    def test_global_delete_allows_preview_without_model_policy(self):
+        self.policy.active = False
+        self.profile.allow_global_unlink = True
+
+        body, status = self._request(
+            "changes.preview",
+            {
+                "action": "record.delete",
+                "payload": {
+                    "model": "res.partner",
+                    "ids": [self.allowed_partner.id],
+                },
+                "idempotency_key": "global-delete-partner",
+            },
+        )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["data"]["action"], "record.delete")
+
+    def test_global_access_keeps_security_models_blocked(self):
+        self.profile.default_model_access = "read"
+
+        body, status = self._request(
+            "records.search",
+            {
+                "model": "ir.config_parameter",
+                "domain": [],
+                "fields": ["key"],
+                "limit": 1,
+            },
+        )
+
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"]["code"], "policy_denied")
+
+    def test_global_access_blocks_privilege_escalation_models(self):
+        self.profile.default_model_access = "write"
+
+        body, status = self._request(
+            "records.search",
+            {
+                "model": "ir.actions.server",
+                "domain": [],
+                "fields": ["name"],
+                "limit": 1,
+            },
+        )
+
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"]["code"], "policy_denied")
+
+    def test_global_write_keeps_users_read_only(self):
+        self.profile.default_model_access = "write"
+
+        body, status = self._request(
+            "changes.preview",
+            {
+                "action": "record.update",
+                "payload": {
+                    "model": "res.users",
+                    "ids": [self.mcp_user.id],
+                    "values": {"name": "Escalated"},
+                },
+                "idempotency_key": "global-user-write-denied",
+            },
+        )
+
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"]["code"], "policy_denied")
+
     def test_preview_approval_and_exactly_once_execution(self):
         body, status = self._request(
             "changes.preview",

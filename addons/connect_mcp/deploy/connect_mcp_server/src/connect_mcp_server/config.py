@@ -64,7 +64,9 @@ class Settings:
     log_level: str = "INFO"
     log_format: str = "json"
     identity_cache_seconds: int = 10
-    user_lock_timeout_seconds: float = 5.0
+    queue_scope: str = "user"
+    queue_timeout_seconds: float = 300.0
+    queue_max_size: int = 100
     events_enabled: bool = True
     event_refresh_seconds: int = 240
     retry_attempts: int = 3
@@ -80,6 +82,11 @@ class Settings:
         unknown_groups = groups - VALID_TOOL_GROUPS
         if unknown_groups:
             raise ConfigurationError(f"Unknown tool groups: {', '.join(sorted(unknown_groups))}.")
+        queue_timeout_name = (
+            "QUEUE_TIMEOUT_SECONDS"
+            if _env("QUEUE_TIMEOUT_SECONDS")
+            else "USER_LOCK_TIMEOUT_SECONDS"
+        )
         settings = cls(
             odoo_url=_env("ODOO_URL"),
             events_url=_env("EVENTS_URL"),
@@ -108,12 +115,14 @@ class Settings:
                 minimum=0,
                 maximum=300,
             ),
-            user_lock_timeout_seconds=_float(
-                "USER_LOCK_TIMEOUT_SECONDS",
-                5.0,
-                minimum=0.1,
-                maximum=60.0,
+            queue_scope=_env("QUEUE_SCOPE", "user").lower(),
+            queue_timeout_seconds=_float(
+                queue_timeout_name,
+                300.0,
+                minimum=0.0,
+                maximum=3600.0,
             ),
+            queue_max_size=_int("QUEUE_MAX_SIZE", 100, minimum=1, maximum=10000),
             events_enabled=_bool("EVENTS_ENABLED", True),
             event_refresh_seconds=_int(
                 "EVENT_REFRESH_SECONDS",
@@ -148,3 +157,5 @@ class Settings:
                 raise ConfigurationError("CONNECT_MCP_EVENTS_URL must be an absolute WS(S) URL.")
         if not self.mcp_path.startswith("/"):
             raise ConfigurationError("CONNECT_MCP_MCP_PATH must start with '/'.")
+        if self.queue_scope not in {"global", "user"}:
+            raise ConfigurationError("CONNECT_MCP_QUEUE_SCOPE must be 'global' or 'user'.")

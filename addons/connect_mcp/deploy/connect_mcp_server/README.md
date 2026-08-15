@@ -46,7 +46,9 @@ API health endpoint without using a user key.
 | `CONNECT_MCP_VERIFY_TLS` | `true` | Verify Odoo HTTPS and WSS certificates |
 | `CONNECT_MCP_MAX_RESPONSE_BYTES` | `10485760` | Maximum buffered Odoo response |
 | `CONNECT_MCP_IDENTITY_CACHE_SECONDS` | `10` | Short successful identity-cache lifetime |
-| `CONNECT_MCP_USER_LOCK_TIMEOUT_SECONDS` | `5` | Wait limit for another operation by the same user |
+| `CONNECT_MCP_QUEUE_SCOPE` | `user` | FIFO queue scope: `user` or one shared `global` queue |
+| `CONNECT_MCP_QUEUE_TIMEOUT_SECONDS` | `300` | Maximum FIFO wait; `0` waits indefinitely |
+| `CONNECT_MCP_QUEUE_MAX_SIZE` | `100` | Maximum number of waiting operations per queue |
 | `CONNECT_MCP_RETRY_ATTEMPTS` | `3` | Attempts for safe/read-only operations |
 | `CONNECT_MCP_CIRCUIT_FAILURE_THRESHOLD` | `5` | Transport/gateway failures before opening |
 | `CONNECT_MCP_CIRCUIT_RESET_SECONDS` | `30` | Delay before one half-open probe |
@@ -61,6 +63,13 @@ See `nginx.edge.example.conf` for a unified Odoo and MCP edge configuration.
 The circuit breaker counts only network failures and HTTP 502/503/504. User
 401/403/429 responses, policy errors, validation errors, and oversized
 responses never open it.
+
+Odoo operations enter a real FIFO queue. With `CONNECT_MCP_QUEUE_SCOPE=global`,
+only one Odoo operation runs at a time across all MCP clients; the next queued
+operation starts immediately when the active operation finishes. Authentication,
+health checks, and event subscriptions do not consume the operation slot. The legacy
+`CONNECT_MCP_USER_LOCK_TIMEOUT_SECONDS` variable remains a fallback for the queue
+timeout when `CONNECT_MCP_QUEUE_TIMEOUT_SECONDS` is unset.
 
 ## Tool Groups
 
