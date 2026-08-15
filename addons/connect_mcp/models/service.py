@@ -224,24 +224,35 @@ class ConnectMcpService(models.AbstractModel):
     @api.model
     def _op_models_list(self, access, params):
         user_env = self._business_env(access)
+        profile = access.profile_id
+        model_ids = profile.policy_ids.filtered("active").mapped("model_id")
+        if profile._has_global_model_access():
+            model_ids |= self.env["ir.model"].sudo().search([("transient", "=", False)])
         result = []
-        for policy in access.profile_id.policy_ids.filtered("active").sorted(
-            key=lambda item: item.model_id.model
-        ):
-            model_name = policy.model_id.model
+        for model_id in model_ids.sorted(key=lambda item: item.model):
+            model_name = model_id.model
             if model_name not in user_env:
                 continue
             Model = user_env[model_name]
-            operations = [
-                operation
-                for operation in policy._operation_names()
-                if self._has_model_access(Model, operation)
+            allowed_policies = [
+                profile._get_policy(model_name, operation, required=False)
+                for operation in ("read", "create", "write", "unlink", "aggregate")
             ]
+            operations = []
+            policy = None
+            for operation, operation_policy in zip(
+                ("read", "create", "write", "unlink", "aggregate"),
+                allowed_policies,
+                strict=True,
+            ):
+                if operation_policy and self._has_model_access(Model, operation):
+                    operations.append(operation)
+                    policy = policy or operation_policy
             if operations:
                 result.append(
                     {
                         "model": model_name,
-                        "name": policy.model_id.name,
+                        "name": model_id.name,
                         "operations": operations,
                         "max_records": policy._record_limit(),
                     }
