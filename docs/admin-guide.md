@@ -186,7 +186,9 @@ docker push registry.example.com/odoo-agent-mcp:1.0.0
 `server/**` он публикует образ
 `ghcr.io/<repository-owner>/odu-mcp-sidecar:sha-<commit>` и дополнительный tag
 по имени ветки. Workflow использует repository `GITHUB_TOKEN` с минимальным
-разрешением `packages:write`; личный registry token не требуется.
+разрешением `packages:write`; личный registry token не требуется. Поскольку
+исходный репозиторий публичный, workflow также устанавливает public visibility
+контейнерного package, чтобы deployment-системы могли pull образ анонимно.
 
 Пример запуска:
 
