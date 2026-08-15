@@ -262,6 +262,9 @@ location / {
 }
 ```
 
+Полный пример единого edge proxy для Odoo UI, MCP endpoint и обоих WebSocket
+маршрутов находится в `server/nginx.edge.example.conf`.
+
 Без `ODOO_MCP_EVENTS_URL` sidecar строит WebSocket URL из
 `ODOO_MCP_ODOO_URL`, поэтому HTTP и WebSocket должны быть доступны через один
 внешний origin. При отдельном evented endpoint используйте явный

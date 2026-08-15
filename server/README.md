@@ -58,6 +58,7 @@ API health endpoint without using a user key.
 When `ODOO_MCP_EVENTS_URL` is unset, the sidecar derives
 `wss://<ODOO_MCP_ODOO_URL host>/odoo_mcp/v1/events`. A reverse proxy must send
 both `/websocket` and `/odoo_mcp/v1/events` to Odoo's evented/gevent port.
+See `nginx.edge.example.conf` for a unified Odoo and MCP edge configuration.
 
 The circuit breaker counts only network failures and HTTP 502/503/504. User
 401/403/429 responses, policy errors, validation errors, and oversized
