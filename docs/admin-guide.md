@@ -182,6 +182,12 @@ docker build -t registry.example.com/odoo-agent-mcp:1.0.0 server
 docker push registry.example.com/odoo-agent-mcp:1.0.0
 ```
 
+Репозиторий также содержит workflow `Publish sidecar`. При изменениях в
+`server/**` он публикует образ
+`ghcr.io/<repository-owner>/odu-mcp-sidecar:sha-<commit>` и дополнительный tag
+по имени ветки. Workflow использует repository `GITHUB_TOKEN` с минимальным
+разрешением `packages:write`; личный registry token не требуется.
+
 Пример запуска:
 
 ```bash
