@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 
@@ -111,3 +112,40 @@ async def test_event_bridge_mints_ticket_and_filters_deduplicated_events() -> No
 
     assert seen_authorization == "Bearer odoo-key"
     assert published == [("odoo:prod:7", "odoo://approval/abc")]
+
+
+@pytest.mark.asyncio
+async def test_event_watcher_lifetime_follows_active_subscriptions() -> None:
+    publisher = SubscriptionPublisher()
+    bridge = OdooEventBridge(_settings(), publisher)
+    token = AccessToken(
+        token="odoo-key",
+        client_id="odoo:prod:7",
+        subject="odoo:prod:7",
+        scopes=["mcp"],
+    )
+    cancelled = asyncio.Event()
+
+    async def worker() -> None:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    async def ensure_watcher(access_token: AccessToken) -> None:
+        subject = access_token.subject or ""
+        if subject not in bridge._watchers:
+            bridge._watchers[subject] = asyncio.create_task(worker())
+            await asyncio.sleep(0)
+
+    bridge.ensure_watcher = ensure_watcher  # type: ignore[method-assign]
+    try:
+        async with bridge.watch_subscription(token):
+            async with bridge.watch_subscription(token):
+                assert bridge._references == {"odoo:prod:7": 2}
+            assert bridge._references == {"odoo:prod:7": 1}
+            assert not cancelled.is_set()
+        assert bridge._references == {}
+        assert cancelled.is_set()
+    finally:
+        await bridge.aclose()

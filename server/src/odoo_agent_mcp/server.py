@@ -111,7 +111,6 @@ def create_server(
     verifier = OdooApiKeyVerifier(
         settings,
         transport=auth_transport,
-        on_verified=event_bridge.ensure_watcher,
     )
 
     @asynccontextmanager
@@ -140,7 +139,7 @@ def create_server(
         lifespan=lifespan,
         auth=verifier,
     )
-    publisher.install(mcp)
+    publisher.install(mcp, watch_subscription=event_bridge.watch_subscription)
     _register_core(mcp)
     _register_resources(mcp)
     _register_prompts(mcp)
