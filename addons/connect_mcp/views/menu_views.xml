@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <menuitem id="menu_mcp_root"
+              name="Connect MCP"
+              sequence="560"
+              groups="connect_mcp.group_mcp_auditor"/>
+
+    <menuitem id="menu_mcp_approvals"
+              name="Approval Inbox"
+              parent="menu_mcp_root"
+              action="action_connect_mcp_approvals"
+              sequence="10"
+              groups="connect_mcp.group_mcp_auditor"/>
+
+    <menuitem id="menu_mcp_profiles"
+              name="Security Profiles"
+              parent="menu_mcp_root"
+              action="action_connect_mcp_profiles"
+              sequence="20"
+              groups="connect_mcp.group_mcp_auditor"/>
+
+    <menuitem id="menu_mcp_access"
+              name="User Access"
+              parent="menu_mcp_root"
+              action="action_connect_mcp_access"
+              sequence="30"
+              groups="connect_mcp.group_mcp_auditor"/>
+
+    <menuitem id="menu_mcp_audit"
+              name="Audit Log"
+              parent="menu_mcp_root"
+              action="action_connect_mcp_audit"
+              sequence="40"
+              groups="connect_mcp.group_mcp_auditor"/>
+</odoo>
