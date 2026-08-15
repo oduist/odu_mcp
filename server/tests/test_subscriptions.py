@@ -23,6 +23,20 @@ def _settings(**overrides: object) -> Settings:
 
 
 @pytest.mark.asyncio
+async def test_event_bridge_uses_explicit_websocket_endpoint_and_matching_origin() -> None:
+    bridge = OdooEventBridge(
+        _settings(events_url="ws://odoo-evented:8072/odoo_mcp/v1/events"),
+        SubscriptionPublisher(),
+    )
+
+    try:
+        assert bridge._websocket_url() == "ws://odoo-evented:8072/odoo_mcp/v1/events"
+        assert bridge._origin() == "http://odoo-evented:8072"
+    finally:
+        await bridge.aclose()
+
+
+@pytest.mark.asyncio
 async def test_fastmcp_subscription_adapter_registers_and_publishes() -> None:
     publisher = SubscriptionPublisher()
     server = FastMCP("test")

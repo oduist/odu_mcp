@@ -53,6 +53,7 @@ def _bool(name: str, default: bool) -> bool:
 @dataclass(frozen=True, slots=True)
 class Settings:
     odoo_url: str
+    events_url: str = ""
     public_url: str = ""
     host: str = "127.0.0.1"
     port: int = 8000
@@ -82,6 +83,7 @@ class Settings:
             raise ConfigurationError(f"Unknown tool groups: {', '.join(sorted(unknown_groups))}.")
         settings = cls(
             odoo_url=_env("ODOO_URL"),
+            events_url=_env("EVENTS_URL"),
             public_url=_env("PUBLIC_URL"),
             host=_env("HOST", "127.0.0.1"),
             port=_int("PORT", 8000, minimum=1, maximum=65535),
@@ -142,6 +144,10 @@ class Settings:
         parsed = urlparse(self.odoo_url)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise ConfigurationError("ODOO_MCP_ODOO_URL must be an absolute HTTP(S) URL.")
+        if self.events_url:
+            events = urlparse(self.events_url)
+            if events.scheme not in {"ws", "wss"} or not events.netloc:
+                raise ConfigurationError("ODOO_MCP_EVENTS_URL must be an absolute WS(S) URL.")
         if self.public_url:
             public = urlparse(self.public_url)
             if public.scheme not in {"http", "https"} or not public.netloc:

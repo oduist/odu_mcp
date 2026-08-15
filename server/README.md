@@ -37,7 +37,8 @@ API health endpoint without using a user key.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `ODOO_MCP_ODOO_URL` | required | Odoo base URL; use a URL whose proxy also routes the event WebSocket |
+| `ODOO_MCP_ODOO_URL` | required | Odoo base HTTP(S) URL used for authentication and control API calls |
+| `ODOO_MCP_EVENTS_URL` | derived from Odoo URL | Optional explicit WS(S) URL for a separately routed evented/gevent upstream |
 | `ODOO_MCP_PUBLIC_URL` | derived locally | Public MCP resource URL used by bearer auth metadata |
 | `ODOO_MCP_HOST` | `127.0.0.1` | HTTP bind address |
 | `ODOO_MCP_PORT` | `8000` | HTTP bind port |

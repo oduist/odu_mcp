@@ -214,13 +214,16 @@ class OdooEventBridge:
             await self.publisher.publish(subject, uri)
 
     def _websocket_url(self) -> str:
+        if self.settings.events_url:
+            return self.settings.events_url
         parsed = urlparse(self.settings.odoo_url)
         scheme = "wss" if parsed.scheme == "https" else "ws"
         return urlunparse((scheme, parsed.netloc, "/odoo_mcp/v1/events", "", "", ""))
 
     def _origin(self) -> str:
-        parsed = urlparse(self.settings.odoo_url)
-        return urlunparse((parsed.scheme, parsed.netloc, "", "", "", ""))
+        parsed = urlparse(self._websocket_url())
+        scheme = "https" if parsed.scheme == "wss" else "http"
+        return urlunparse((scheme, parsed.netloc, "", "", "", ""))
 
     def _ssl_context(self, websocket_url: str) -> ssl.SSLContext | None:
         if not websocket_url.startswith("wss://"):

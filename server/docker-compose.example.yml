@@ -4,6 +4,7 @@ services:
     restart: unless-stopped
     environment:
       ODOO_MCP_ODOO_URL: ${ODOO_MCP_ODOO_URL}
+      ODOO_MCP_EVENTS_URL: ${ODOO_MCP_EVENTS_URL:-}
       ODOO_MCP_PUBLIC_URL: ${ODOO_MCP_PUBLIC_URL}
       ODOO_MCP_HOST: 0.0.0.0
       ODOO_MCP_PORT: 8000

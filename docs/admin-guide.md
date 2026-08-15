@@ -215,7 +215,8 @@ subscription buses намеренно рассчитаны на один про�
 
 | Переменная | Рекомендуемое значение |
 | --- | --- |
-| `ODOO_MCP_ODOO_URL` | Публичный HTTPS URL Odoo, включая WebSocket routing |
+| `ODOO_MCP_ODOO_URL` | Публичный HTTPS URL Odoo для control API |
+| `ODOO_MCP_EVENTS_URL` | Отдельный `ws://` или `wss://` URL evented worker, если основной proxy не маршрутизирует WebSocket |
 | `ODOO_MCP_PUBLIC_URL` | Публичный URL MCP endpoint |
 | `ODOO_MCP_HOST` | `0.0.0.0` внутри контейнера |
 | `ODOO_MCP_PORT` | `8000` |
@@ -231,6 +232,16 @@ subscription buses намеренно рассчитаны на один про�
 Обычные control API endpoints направляйте на HTTP workers Odoo. Маршрут
 `/odoo_mcp/v1/events` должен попадать на evented/gevent worker так же, как
 стандартный `/websocket`.
+
+Если HTTP и evented upstream доступны по разным адресам, оставьте
+`ODOO_MCP_ODOO_URL` на проверяемом HTTPS endpoint и задайте отдельный
+`ODOO_MCP_EVENTS_URL`. Например, внутри доверенной контейнерной сети:
+
+```dotenv
+ODOO_MCP_ODOO_URL=https://odoo.example.com
+ODOO_MCP_EVENTS_URL=ws://odoo:8072/odoo_mcp/v1/events
+ODOO_MCP_VERIFY_TLS=true
+```
 
 Упрощённая схема Nginx:
 
