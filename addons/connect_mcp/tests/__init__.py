@@ -1,1 +1,1 @@
-from . import test_mcp_control
+from . import test_connect_mcp
