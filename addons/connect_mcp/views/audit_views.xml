@@ -88,6 +88,7 @@
                     <filter name="group_outcome" string="Outcome" context="{'group_by': 'outcome'}"/>
                     <filter name="group_operation" string="Operation" context="{'group_by': 'operation'}"/>
                     <filter name="group_model" string="Model" context="{'group_by': 'model_name'}"/>
+                    <filter name="group_user" string="User" context="{'group_by': 'user_id'}"/>
                     <filter name="group_day" string="Day" context="{'group_by': 'create_date:day'}"/>
                 </group>
             </search>

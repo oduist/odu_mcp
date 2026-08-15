@@ -16,6 +16,10 @@ def _base_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "TOOL_GROUPS",
         "EVENTS_ENABLED",
         "EVENT_REFRESH_SECONDS",
+        "QUEUE_SCOPE",
+        "QUEUE_TIMEOUT_SECONDS",
+        "QUEUE_MAX_SIZE",
+        "USER_LOCK_TIMEOUT_SECONDS",
     ):
         monkeypatch.delenv(f"CONNECT_MCP_{name}", raising=False)
     monkeypatch.setenv("CONNECT_MCP_ODOO_URL", "https://odoo.example.test")
@@ -26,12 +30,18 @@ def test_from_env_builds_http_only_settings(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("CONNECT_MCP_EVENTS_URL", "wss://events.example.test/connect_mcp/v1/events")
     monkeypatch.setenv("CONNECT_MCP_TOOL_GROUPS", "write,sales")
     monkeypatch.setenv("CONNECT_MCP_EVENTS_ENABLED", "false")
+    monkeypatch.setenv("CONNECT_MCP_QUEUE_SCOPE", "global")
+    monkeypatch.setenv("CONNECT_MCP_QUEUE_TIMEOUT_SECONDS", "120")
+    monkeypatch.setenv("CONNECT_MCP_QUEUE_MAX_SIZE", "25")
 
     settings = Settings.from_env()
 
     assert settings.tool_groups == frozenset({"core", "write", "sales"})
     assert settings.events_url == "wss://events.example.test/connect_mcp/v1/events"
     assert settings.events_enabled is False
+    assert settings.queue_scope == "global"
+    assert settings.queue_timeout_seconds == 120
+    assert settings.queue_max_size == 25
     assert not hasattr(settings, "transport")
 
 
@@ -57,6 +67,14 @@ def test_rejects_unknown_tool_group(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CONNECT_MCP_TOOL_GROUPS", "core,arbitrary_orm")
 
     with pytest.raises(ConfigurationError, match="Unknown tool groups"):
+        Settings.from_env()
+
+
+def test_rejects_unknown_queue_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    _base_env(monkeypatch)
+    monkeypatch.setenv("CONNECT_MCP_QUEUE_SCOPE", "tenant")
+
+    with pytest.raises(ConfigurationError, match="QUEUE_SCOPE"):
         Settings.from_env()
 
 

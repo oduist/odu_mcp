@@ -16,7 +16,7 @@ from starlette.responses import JSONResponse
 
 from .auth import OdooApiKeyVerifier
 from .client import OdooControlClient
-from .concurrency import UserOperationLimiter
+from .concurrency import OperationQueue
 from .config import Settings
 from .errors import OdooApiError
 from .schemas import (
@@ -62,7 +62,7 @@ EXECUTE = ToolAnnotations(
 class Runtime:
     settings: Settings
     client: OdooControlClient
-    limiter: UserOperationLimiter
+    operation_queue: OperationQueue
 
 
 def _runtime(ctx: Context) -> Runtime:
@@ -82,7 +82,7 @@ async def _execute(
         raise ToolError("authentication_required: A valid Connect MCP API key is required.")
     try:
         runtime = _runtime(ctx)
-        async with runtime.limiter.acquire(access_token.subject):
+        async with runtime.operation_queue.acquire(access_token.subject):
             return await runtime.client.execute(
                 operation,
                 params,
@@ -119,7 +119,11 @@ def create_server(
         runtime = Runtime(
             settings=settings,
             client=client,
-            limiter=UserOperationLimiter(settings.user_lock_timeout_seconds),
+            operation_queue=OperationQueue(
+                scope=settings.queue_scope,
+                timeout_seconds=settings.queue_timeout_seconds,
+                max_queue_size=settings.queue_max_size,
+            ),
         )
         try:
             yield runtime
@@ -132,7 +136,7 @@ def create_server(
         name="Connect MCP Server",
         instructions=(
             "Use read tools freely within the Odoo policy. "
-            "Do not invoke tools in parallel for the same Odoo identity. "
+            "Parallel tool calls are accepted and processed through the configured FIFO queue. "
             "A preview is not an executed change. Mutations require an Odoo approval "
             "followed by odoo_execute_approved_change."
         ),

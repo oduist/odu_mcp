@@ -47,10 +47,6 @@
                             <field name="default_model_access" widget="radio"/>
                             <field name="allow_global_create"/>
                             <field name="allow_global_unlink"/>
-                            <div class="text-muted">
-                                Explicit Model Policies override these defaults. Odoo ACLs,
-                                record rules, field security, and the MCP safety denylist always apply.
-                            </div>
                         </group>
                         <group string="Capabilities">
                             <group>
@@ -68,10 +64,11 @@
                     </group>
                     <notebook>
                         <page string="Model Policies" name="model_policies">
-                            <div class="alert alert-info" role="alert">
-                                Use Model Policies for model-specific fields, domains, limits, or
-                                exceptions to Default Model Access. An explicit policy fully overrides
-                                the profile defaults for that model.
+                            <div class="alert alert-info mb-2" role="alert">
+                                Default Model Access applies only when a model has no explicit policy.
+                                Use Model Policies for model-specific operations, fields, domains, limits,
+                                or exceptions. Odoo ACLs, record rules, field security, and the MCP safety
+                                denylist always apply.
                             </div>
                             <field name="policy_ids" context="{'default_profile_id': id}">
                                 <list editable="bottom">

@@ -1,7 +1,7 @@
 {
     "name": "Connect MCP",
     "summary": "Secure policy, approval, and audit layer for external MCP servers",
-    "version": "19.0.2.1.1",
+    "version": "19.0.2.1.2",
     "category": "Technical",
     "website": "https://github.com/oduist/connect_addons_ng",
     "author": "Connect MCP Contributors",
