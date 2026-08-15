@@ -23,6 +23,22 @@ BLOCKED_POLICY_MODELS = {
     "connect.mcp.audit.log",
     "connect.mcp.event.ticket",
 }
+# Excluded from the profile-wide fallback because write access to them enables
+# code execution or privilege escalation past this policy layer. An explicit
+# Model Policy with its field allowlists can still expose them deliberately.
+GLOBAL_ACCESS_BLOCKED_MODELS = BLOCKED_POLICY_MODELS | {
+    "base.automation",
+    "ir.actions.server",
+    "ir.cron",
+    "ir.mail_server",
+    "ir.model.access",
+    "ir.rule",
+    "ir.ui.view",
+    "res.groups",
+}
+# Readable through the fallback, but never writable: mutations here change
+# group membership and therefore effective permissions.
+GLOBAL_ACCESS_READONLY_MODELS = {"res.users"}
 WRITE_MAGIC_FIELDS = {
     "id",
     "create_uid",
@@ -43,11 +59,12 @@ class GlobalModelPolicy:
         self.max_records = 0
         self.allow_binary_read = False
         self.allow_binary_write = False
+        writable = model_id.model not in GLOBAL_ACCESS_READONLY_MODELS
         self.allow_read = profile.default_model_access in {"read", "write"}
         self.allow_aggregate = self.allow_read and profile.allow_aggregate
-        self.allow_create = profile.allow_global_create
-        self.allow_write = profile.default_model_access == "write"
-        self.allow_unlink = profile.allow_global_unlink
+        self.allow_create = profile.allow_global_create and writable
+        self.allow_write = profile.default_model_access == "write" and writable
+        self.allow_unlink = profile.allow_global_unlink and writable
 
     def _allows(self, operation):
         return bool(
@@ -205,7 +222,9 @@ class ConnectMcpProfile(models.Model):
             model_id = self.env["ir.model"].sudo()._get(model_name)
             policy = (
                 GlobalModelPolicy(self, model_id)
-                if model_id and not model_id.transient and model_name not in BLOCKED_POLICY_MODELS
+                if model_id
+                and not model_id.transient
+                and model_name not in GLOBAL_ACCESS_BLOCKED_MODELS
                 else self.env["connect.mcp.model.policy"]
             )
             allowed = bool(policy and policy._allows(operation))

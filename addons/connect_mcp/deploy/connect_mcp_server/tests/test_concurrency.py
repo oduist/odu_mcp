@@ -97,6 +97,47 @@ async def test_cancelled_waiter_is_removed_from_queue() -> None:
 
 
 @pytest.mark.asyncio
+async def test_release_skips_abandoned_waiter_and_grants_next() -> None:
+    queue = OperationQueue(scope="global", timeout_seconds=0, max_queue_size=10)
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    third_ran = asyncio.Event()
+
+    async def hold_first() -> None:
+        async with queue.acquire("alice"):
+            first_entered.set()
+            await release_first.wait()
+
+    async def wait_second() -> None:
+        async with queue.acquire("bob"):
+            pass
+
+    async def run_third() -> None:
+        async with queue.acquire("carol"):
+            third_ran.set()
+
+    first = asyncio.create_task(hold_first())
+    await first_entered.wait()
+    second = asyncio.create_task(wait_second())
+    await asyncio.sleep(0)
+    third = asyncio.create_task(run_third())
+    await asyncio.sleep(0)
+
+    # Simulate a timeout or client cancellation racing with the release: the
+    # holder resumes first and releases the slot while the second waiter is
+    # already cancelled but has not yet left the queue.
+    release_first.set()
+    queue._entries["global"].waiters[0].cancel()
+    await first
+    with pytest.raises(asyncio.CancelledError):
+        await second
+    await asyncio.wait_for(third_ran.wait(), timeout=1)
+    await third
+
+    assert queue._entries == {}
+
+
+@pytest.mark.asyncio
 async def test_global_queue_rejects_requests_above_maximum_size() -> None:
     queue = OperationQueue(scope="global", timeout_seconds=1, max_queue_size=1)
     first_entered = asyncio.Event()

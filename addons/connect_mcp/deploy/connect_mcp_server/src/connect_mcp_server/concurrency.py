@@ -64,7 +64,7 @@ class OperationQueue:
                     else:
                         await waiter
                 except TimeoutError as exc:
-                    await self._discard_waiter(entry, waiter)
+                    await self._discard_waiter(key, entry, waiter)
                     raise OdooApiError(
                         code="operation_queue_timeout",
                         message="The MCP operation did not reach the front of the queue in time.",
@@ -72,7 +72,7 @@ class OperationQueue:
                         status_code=429,
                     ) from exc
                 except BaseException:
-                    await self._discard_waiter(entry, waiter)
+                    await self._discard_waiter(key, entry, waiter)
                     raise
             acquired = True
             yield
@@ -82,17 +82,29 @@ class OperationQueue:
 
     async def _discard_waiter(
         self,
+        key: str,
         entry: _Entry,
         waiter: asyncio.Future[None],
     ) -> None:
         async with self._registry_lock:
-            entry.waiters.remove(waiter)
+            try:
+                entry.waiters.remove(waiter)
+            except ValueError:
+                # A release may have granted the slot to this waiter while it
+                # was abandoning the queue; a cancelled waiter was skipped by
+                # the release instead and owns nothing.
+                if not waiter.cancelled():
+                    self._release_locked(key, entry)
 
     async def _release(self, key: str, entry: _Entry) -> None:
         async with self._registry_lock:
-            if entry.waiters:
-                waiter = entry.waiters.popleft()
+            self._release_locked(key, entry)
+
+    def _release_locked(self, key: str, entry: _Entry) -> None:
+        while entry.waiters:
+            waiter = entry.waiters.popleft()
+            if not waiter.done():
                 waiter.set_result(None)
                 return
-            entry.active = False
-            self._entries.pop(key, None)
+        entry.active = False
+        self._entries.pop(key, None)

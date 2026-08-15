@@ -334,6 +334,41 @@ class TestConnectMcp(TransactionCase):
         self.assertEqual(status, 403)
         self.assertEqual(body["error"]["code"], "policy_denied")
 
+    def test_global_access_blocks_privilege_escalation_models(self):
+        self.profile.default_model_access = "write"
+
+        body, status = self._request(
+            "records.search",
+            {
+                "model": "ir.actions.server",
+                "domain": [],
+                "fields": ["name"],
+                "limit": 1,
+            },
+        )
+
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"]["code"], "policy_denied")
+
+    def test_global_write_keeps_users_read_only(self):
+        self.profile.default_model_access = "write"
+
+        body, status = self._request(
+            "changes.preview",
+            {
+                "action": "record.update",
+                "payload": {
+                    "model": "res.users",
+                    "ids": [self.mcp_user.id],
+                    "values": {"name": "Escalated"},
+                },
+                "idempotency_key": "global-user-write-denied",
+            },
+        )
+
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"]["code"], "policy_denied")
+
     def test_preview_approval_and_exactly_once_execution(self):
         body, status = self._request(
             "changes.preview",

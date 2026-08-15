@@ -12,6 +12,7 @@ from markupsafe import Markup, escape
 from odoo import _, api, fields, models, release
 from odoo.exceptions import AccessError, MissingError, UserError, ValidationError
 from odoo.fields import Domain
+from odoo.modules.module import get_manifest
 
 
 _logger = logging.getLogger(__name__)
@@ -193,7 +194,7 @@ class ConnectMcpService(models.AbstractModel):
         user = user_env.user
         return {
             "odoo_version": release.version,
-            "module_version": "19.0.2.0.0",
+            "module_version": get_manifest("connect_mcp")["version"],
             "profile": access.profile_id.code,
             "user": {"id": user.id, "name": user.name, "login": user.login},
             "companies": [
