@@ -124,7 +124,11 @@ class ConnectMcpProfile(models.Model):
         default=0,
         help="Maximum requests per UTC day. Zero disables the separate daily quota.",
     )
-    approval_ttl_minutes = fields.Integer(default=30, required=True)
+    approval_ttl_minutes = fields.Integer(
+        string="Approval TTL Minutes",
+        default=30,
+        required=True,
+    )
     auto_approve_low_risk = fields.Boolean(
         default=False,
         help="Only low-risk collaboration actions may be auto-approved.",
