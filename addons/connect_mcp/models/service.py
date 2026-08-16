@@ -11,7 +11,7 @@ from markupsafe import Markup, escape
 
 from odoo import _, api, fields, models, release
 from odoo.exceptions import AccessError, MissingError, UserError, ValidationError
-from odoo.modules.module import get_manifest
+from odoo.modules.module import load_information_from_description_file
 from odoo.osv import expression
 
 
@@ -194,7 +194,9 @@ class ConnectMcpService(models.AbstractModel):
         user = user_env.user
         return {
             "odoo_version": release.version,
-            "module_version": get_manifest("connect_mcp")["version"],
+            "module_version": load_information_from_description_file("connect_mcp")[
+                "version"
+            ],
             "profile": access.profile_id.code,
             "user": {"id": user.id, "name": user.name, "login": user.login},
             "companies": [
