@@ -36,10 +36,13 @@ class ConnectMcpAccess(models.Model):
     )
     event_version = fields.Integer(readonly=True, copy=False, default=0)
 
-    _user_unique = models.Constraint(
-        "UNIQUE(user_id)",
-        "Each Odoo user may have only one MCP access assignment.",
-    )
+    _sql_constraints = [
+        (
+            "user_unique",
+            "UNIQUE(user_id)",
+            "Each Odoo user may have only one MCP access assignment.",
+        ),
+    ]
 
     def init(self):
         self.env.cr.execute(
@@ -114,7 +117,7 @@ class ConnectMcpAccess(models.Model):
             (self.id,),
         )
         version = self.env.cr.fetchone()[0]
-        self.invalidate_recordset(["event_version"])
+        self.invalidate_cache(["event_version"])
         self.env["bus.bus"]._sendone(
             self.event_channel,
             "connect_mcp_resource_updated",

@@ -26,16 +26,14 @@ class IrHttp(models.AbstractModel):
                 "The MCP API key is invalid or expired.",
                 www_authenticate=WWWAuthenticate("Bearer"),
             )
-        if request.env.uid and request.env.uid != user_id:
+        if request.session.uid and request.session.uid != user_id:
             raise Unauthorized(
                 "The current session does not match the MCP API key.",
                 www_authenticate=WWWAuthenticate("Bearer"),
             )
 
-        request.update_env(user=user_id)
-        request.update_context(**request.env["res.users"].context_get())
-        request.session.can_save = False
-        cls._auth_method_user()
+        request.uid = user_id
+        request.context = request.env["res.users"].context_get()
 
     @classmethod
     def _auth_method_mcp_event(cls):
@@ -52,9 +50,7 @@ class IrHttp(models.AbstractModel):
                 www_authenticate=WWWAuthenticate("Bearer"),
             )
 
-        context = dict(request.session.context or {})
+        request.uid = request.env.ref("base.public_user").id
+        context = dict(request.env["res.users"].context_get())
         context["connect_mcp_event_channel"] = ticket.access_id.event_channel
-        request.session.uid = None
-        request.session.context = context
-        request.session.can_save = True
-        request.session.is_dirty = True
+        request.context = context

@@ -31,7 +31,7 @@ class TestConnectMcp(TransactionCase):
             {
                 "name": "MCP Test User",
                 "login": "mcp-test-user@example.com",
-                "group_ids": [
+                "groups_id": [
                     Command.set(
                         [
                             cls.env.ref("base.group_user").id,
@@ -74,7 +74,6 @@ class TestConnectMcp(TransactionCase):
         cls.token = cls.env["res.users.apikeys"].with_user(cls.mcp_user)._generate(
             "mcp",
             "MCP test key",
-            fields.Datetime.add(fields.Datetime.now(), days=1),
         )
         cls.service = cls.env["connect.mcp.service"]
 
@@ -99,7 +98,6 @@ class TestConnectMcp(TransactionCase):
         global_token = self.env["res.users.apikeys"].with_user(self.mcp_user)._generate(
             None,
             "Global test key",
-            fields.Datetime.add(fields.Datetime.now(), days=1),
         )
         user_id = self.env["res.users.apikeys"]._check_mcp_credentials(self.token)
         global_user_id = self.env["res.users.apikeys"]._check_mcp_credentials(global_token)
@@ -127,7 +125,7 @@ class TestConnectMcp(TransactionCase):
         self.assertTrue(ticket)
         self.assertNotEqual(ticket.token_hash, token)
         self.assertEqual(Ticket._check(token).access_id, self.access)
-        ticket.invalidate_recordset(["expires_at"])
+        ticket.invalidate_cache(["expires_at"])
         self.assertEqual(ticket.expires_at, expires_at)
         self.assertFalse(Ticket._check("invalid-ticket"))
 
@@ -136,12 +134,12 @@ class TestConnectMcp(TransactionCase):
         version = self.access._publish_resource_update(
             "odoo://approval/00000000-0000-4000-8000-000000000001"
         )
-        messages = self.env.cr.precommit.data["bus.bus.values"]
-        wire_message = json.loads(messages[-1]["message"])
+        message = self.env["bus.bus"].sudo().search([], order="id desc", limit=1)
+        wire_message = json.loads(message.message)
 
         self.assertEqual(version, previous_version + 1)
         self.assertEqual(
-            json.loads(messages[-1]["channel"]),
+            json.loads(message.channel),
             [self.env.cr.dbname, self.access.event_channel],
         )
         self.assertEqual(wire_message["type"], "connect_mcp_resource_updated")
@@ -485,19 +483,17 @@ class TestConnectMcp(TransactionCase):
         self.assertEqual(error, "inactive_mcp_access")
         self.access.active = True
 
-    def test_expired_mcp_api_key(self):
+    def test_mcp_api_key_is_rejected_for_inactive_user(self):
         token = self.env["res.users.apikeys"].with_user(self.mcp_user)._generate(
             "mcp",
-            "Expired MCP test key",
-            fields.Datetime.add(fields.Datetime.now(), days=1),
+            "Inactive user MCP test key",
         )
-        expired_at = fields.Datetime.subtract(fields.Datetime.now(), seconds=1)
-        self.env.cr.execute(
-            "UPDATE res_users_apikeys SET expiration_date = %s WHERE index = %s",
-            [expired_at, token[:8]],
-        )
-        user_id = self.env["res.users.apikeys"]._check_mcp_credentials(token)
-        self.assertFalse(user_id)
+        self.mcp_user.active = False
+        try:
+            user_id = self.env["res.users.apikeys"]._check_mcp_credentials(token)
+            self.assertFalse(user_id)
+        finally:
+            self.mcp_user.active = True
 
     def test_rate_limit_is_enforced_per_access(self):
         self.profile.rate_limit_per_minute = 1

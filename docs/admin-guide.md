@@ -1,7 +1,7 @@
 # Руководство администратора Connect MCP
 
 Документ описывает установку, настройку безопасности, эксплуатацию и
-диагностику Connect MCP для Odoo 19.
+диагностику Connect MCP для Odoo 15.
 
 ## Архитектура и границы ответственности
 
@@ -41,7 +41,7 @@ Sidecar не является источником бизнес-прав и не
 
 ## Ограничения текущего релиза
 
-- Поддерживается только Odoo 19.
+- Поддерживается только Odoo 15.
 - Поддерживаются только новые базы.
 - Если обнаружена таблица или metadata модели `connect.mcp.credential`, установка
   или upgrade завершаются явной ошибкой.
@@ -53,12 +53,12 @@ Sidecar не является источником бизнес-прав и не
 
 ## Требования
 
-- Odoo `19.0`;
-- PostgreSQL 13+, рекомендуется 15 или 16;
+- Odoo `15.0`;
+- PostgreSQL 12+, рекомендуется 14 или 15;
 - установленный Odoo Bus/evented worker для subscriptions;
 - Python 3.11-3.13 или контейнер sidecar;
 - HTTPS для Odoo и MCP endpoint;
-- reverse proxy с поддержкой WebSocket upgrade;
+- reverse proxy с маршрутизацией long-polling на evented worker;
 - отдельный DNS endpoint для sidecar, например `mcp.example.com`.
 
 ## Установка Odoo-модуля
@@ -214,7 +214,7 @@ subscription buses намеренно рассчитаны на один про�
 | Переменная | Рекомендуемое значение |
 | --- | --- |
 | `CONNECT_MCP_ODOO_URL` | Публичный HTTPS URL Odoo для control API |
-| `CONNECT_MCP_EVENTS_URL` | Отдельный `ws://` или `wss://` URL evented worker, если основной proxy не маршрутизирует WebSocket |
+| `CONNECT_MCP_EVENTS_URL` | Отдельный `http://` или `https://` URL evented worker, если основной proxy не маршрутизирует long-polling |
 | `CONNECT_MCP_HOST` | `0.0.0.0` внутри контейнера |
 | `CONNECT_MCP_PORT` | `8000` |
 | `CONNECT_MCP_MCP_PATH` | `/mcp` |
@@ -225,11 +225,11 @@ subscription buses намеренно рассчитаны на один про�
 Полный список находится в `addons/connect_mcp/deploy/connect_mcp_server/.env.example`
 и `addons/connect_mcp/deploy/connect_mcp_server/README.md`.
 
-## Reverse proxy и WebSocket
+## Reverse proxy и long-polling
 
 Обычные control API endpoints направляйте на HTTP workers Odoo. Маршрут
 `/connect_mcp/v1/events` должен попадать на evented/gevent worker так же, как
-стандартный `/websocket`.
+стандартный `/longpolling/poll`.
 
 Если HTTP и evented upstream доступны по разным адресам, оставьте
 `CONNECT_MCP_ODOO_URL` на проверяемом HTTPS endpoint и задайте отдельный
@@ -237,18 +237,17 @@ subscription buses намеренно рассчитаны на один про�
 
 ```dotenv
 CONNECT_MCP_ODOO_URL=https://odoo.example.com
-CONNECT_MCP_EVENTS_URL=ws://odoo:8072/connect_mcp/v1/events
+CONNECT_MCP_EVENTS_URL=http://odoo:8072/connect_mcp/v1/events
 CONNECT_MCP_VERIFY_TLS=true
 ```
 
 Упрощённая схема Nginx:
 
 ```nginx
-location ~ ^/(websocket|connect_mcp/v1/events)$ {
+location ~ ^/(longpolling(?:/|$)|connect_mcp/v1/events$) {
     proxy_pass http://odoo_evented;
     proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
+    proxy_set_header Connection "";
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
 }
@@ -260,14 +259,14 @@ location / {
 }
 ```
 
-Полный пример единого edge proxy для Odoo UI, MCP endpoint и обоих WebSocket
+Полный пример единого edge proxy для Odoo UI, MCP endpoint и обоих long-polling
 маршрутов находится в
 `addons/connect_mcp/deploy/connect_mcp_server/nginx.edge.example.conf`.
 
-Без `CONNECT_MCP_EVENTS_URL` sidecar строит WebSocket URL из
-`CONNECT_MCP_ODOO_URL`, поэтому HTTP и WebSocket должны быть доступны через один
-внешний origin. При отдельном evented endpoint используйте явный
-`CONNECT_MCP_EVENTS_URL`; для публичного `wss://` сертификат проверяется согласно
+Без `CONNECT_MCP_EVENTS_URL` sidecar строит HTTP(S) event URL из
+`CONNECT_MCP_ODOO_URL`, поэтому control API и long-polling должны быть доступны
+через один внешний origin. При отдельном evented endpoint используйте явный
+`CONNECT_MCP_EVENTS_URL`; для публичного `https://` сертификат проверяется согласно
 `CONNECT_MCP_VERIFY_TLS`.
 
 ## Health checks

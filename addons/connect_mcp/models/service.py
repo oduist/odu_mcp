@@ -11,8 +11,8 @@ from markupsafe import Markup, escape
 
 from odoo import _, api, fields, models, release
 from odoo.exceptions import AccessError, MissingError, UserError, ValidationError
-from odoo.fields import Domain
-from odoo.modules.module import get_manifest
+from odoo.modules.module import load_information_from_description_file
+from odoo.osv import expression
 
 
 _logger = logging.getLogger(__name__)
@@ -194,7 +194,9 @@ class ConnectMcpService(models.AbstractModel):
         user = user_env.user
         return {
             "odoo_version": release.version,
-            "module_version": get_manifest("connect_mcp")["version"],
+            "module_version": load_information_from_description_file("connect_mcp")[
+                "version"
+            ],
             "profile": access.profile_id.code,
             "user": {"id": user.id, "name": user.name, "login": user.login},
             "companies": [
@@ -244,7 +246,6 @@ class ConnectMcpService(models.AbstractModel):
             for operation, operation_policy in zip(
                 ("read", "create", "write", "unlink", "aggregate"),
                 allowed_policies,
-                strict=True,
             ):
                 if operation_policy and self._has_model_access(Model, operation):
                     operations.append(operation)
@@ -373,9 +374,11 @@ class ConnectMcpService(models.AbstractModel):
             raise McpServiceError("policy_denied", _("Attachment access is disabled."), status=403)
         attachment_id = self._positive_int(params.get("attachment_id"), "attachment_id")
         user_env = self._business_env(access)
-        attachment = user_env["ir.attachment"].browse(attachment_id)
-        attachment.check_access("read")
-        if not attachment.exists() or not attachment.res_model or not attachment.res_id:
+        attachment = user_env["ir.attachment"].search(
+            [("id", "=", attachment_id)],
+            limit=1,
+        )
+        if not attachment or not attachment.res_model or not attachment.res_id:
             raise McpServiceError("not_found", _("Attachment was not found."), status=404)
         Model, policy = self._model_policy(access, attachment.res_model, "read")
         self._records_in_policy(Model, policy, [attachment.res_id], "read")
@@ -409,10 +412,7 @@ class ConnectMcpService(models.AbstractModel):
         Model, policy = self._model_policy(access, report.model, "read")
         ids = self._parse_ids(params.get("ids"), max_count=min(20, policy._record_limit()))
         records = self._records_in_policy(Model, policy, ids, "read")
-        content, content_type = user_env["ir.actions.report"]._render_qweb_pdf(
-            report,
-            res_ids=records.ids,
-        )
+        content, content_type = report._render_qweb_pdf(res_ids=records.ids)
         if len(content) > self._max_binary_bytes():
             raise McpServiceError("response_too_large", _("Rendered report exceeds the configured limit."), status=413)
         return {
@@ -493,7 +493,7 @@ class ConnectMcpService(models.AbstractModel):
     @api.model
     def _op_change_execute(self, access, params):
         approval = self._approval_for_access(access, params.get("approval_id"))
-        approval.lock_for_update()
+        approval._lock_for_update()
         if approval.state == "executed":
             return approval._public_dict()
         if approval.expires_at <= fields.Datetime.now():
@@ -569,7 +569,7 @@ class ConnectMcpService(models.AbstractModel):
             raise McpServiceError("invalid_values", _("Create values must be an object or list of objects."))
         if len(values_list) > access.profile_id.max_batch_size:
             raise McpServiceError("batch_too_large", _("Create batch exceeds the profile limit."), status=413)
-        Model.browse().check_access("create")
+        Model.check_access_rights("create")
         normalized_values = [
             self._write_values(policy, Model, values, "create")
             for values in values_list
@@ -878,13 +878,13 @@ class ConnectMcpService(models.AbstractModel):
             raise McpServiceError("unknown_model", _("Model is not installed."), status=404)
         Model = env[model_name]
         access_operation = "read" if operation == "aggregate" else operation
-        Model.browse().check_access(access_operation)
+        Model.check_access_rights(access_operation)
         return Model, policy
 
     @api.model
     def _has_model_access(self, Model, operation):
         access_operation = "read" if operation == "aggregate" else operation
-        return Model.browse().has_access(access_operation)
+        return Model.check_access_rights(access_operation, raise_exception=False)
 
     @api.model
     def _model_name(self, params):
@@ -898,14 +898,14 @@ class ConnectMcpService(models.AbstractModel):
         if not isinstance(client_domain, list):
             raise McpServiceError("invalid_domain", _("Domain must be a JSON list."))
         try:
-            return Domain(client_domain) & policy._forced_domain()
+            return expression.AND([client_domain, policy._forced_domain()])
         except (TypeError, ValueError) as exc:
             raise McpServiceError("invalid_domain", _("Domain is malformed.")) from exc
 
     @api.model
     def _records_in_policy(self, Model, policy, ids, operation):
         records = Model.search(
-            Domain("id", "in", ids) & policy._forced_domain(),
+            expression.AND([[('id', 'in', ids)], policy._forced_domain()]),
             limit=len(ids),
         )
         if set(records.ids) != set(ids):
@@ -914,7 +914,8 @@ class ConnectMcpService(models.AbstractModel):
                 _("One or more records are outside the allowed scope."),
                 status=403,
             )
-        records.check_access(operation)
+        records.check_access_rights(operation)
+        records.check_access_rule(operation)
         return records
 
     @api.model
@@ -959,7 +960,7 @@ class ConnectMcpService(models.AbstractModel):
             field = Model._fields.get(name)
             if not field:
                 raise McpServiceError("invalid_fields", _("Unknown write field."))
-            Model._check_field_access(field, "write")
+            Model.check_field_access_rights("write", [name])
             if field.readonly:
                 raise McpServiceError("field_denied", _("Readonly fields cannot be written."), status=403)
         return values

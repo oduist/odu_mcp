@@ -153,8 +153,8 @@ class Settings:
             raise ConfigurationError("CONNECT_MCP_ODOO_URL must be an absolute HTTP(S) URL.")
         if self.events_url:
             events = urlparse(self.events_url)
-            if events.scheme not in {"ws", "wss"} or not events.netloc:
-                raise ConfigurationError("CONNECT_MCP_EVENTS_URL must be an absolute WS(S) URL.")
+            if events.scheme not in {"http", "https"} or not events.netloc:
+                raise ConfigurationError("CONNECT_MCP_EVENTS_URL must be an absolute HTTP(S) URL.")
         if not self.mcp_path.startswith("/"):
             raise ConfigurationError("CONNECT_MCP_MCP_PATH must start with '/'.")
         if self.queue_scope not in {"global", "user"}:

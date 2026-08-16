@@ -3,7 +3,7 @@
 ## Scope
 
 `connect_mcp` is the authoritative security and execution layer for MCP
-access to Odoo 19. It does not implement the MCP wire protocol. It exposes a
+access to Odoo 15. It does not implement the MCP wire protocol. It exposes a
 small HTTP API consumed by one FastMCP sidecar.
 
 This release supports fresh databases only. Installation or upgrade must fail
@@ -16,7 +16,8 @@ compatibility alias, or legacy-secret path is allowed.
 - The wizard defaults to **MCP only**, which stores scope `mcp`.
 - An `mcp` key authenticates only routes using `auth="mcp"`; it cannot satisfy
   Odoo's normal `rpc` scope.
-- API-key expiration and active-user checks remain Odoo core behavior.
+- API-key revocation and active-user checks remain Odoo core behavior. Odoo 15
+  API keys do not have a native expiry field.
 - The bearer owner becomes `request.env.user`; callers cannot provide or select
   another user ID.
 
@@ -77,6 +78,10 @@ the sidecar's token-verification endpoint.
 }
 ```
 
+On Odoo 15, POST bodies use the vendor media type
+`application/vnd.connect-mcp+json` so the routes remain raw HTTP endpoints
+rather than being captured by Odoo's JSON-RPC dispatcher.
+
 Responses use a common envelope:
 
 ```json
@@ -129,14 +134,13 @@ fields redacted. Raw API keys and binary bodies are never recorded.
 ## Events
 
 `POST /events/ticket` returns a random events-only bearer ticket. Only its
-SHA-256 digest is stored. Its short lifetime is absolute; WebSocket handshakes
-record usage but do not extend expiry.
+SHA-256 digest is stored. Its short lifetime is absolute; event polls do not
+extend expiry.
 
-`GET /connect_mcp/v1/events` is an Odoo Bus WebSocket route using
-`auth="mcp_event"`. Ticket authentication creates a public-only WebSocket
-session whose context is restricted to the access assignment's unguessable bus
-channel. The standard broadcast, group, partner, and caller-provided channels
-are not added for this session.
+`POST /connect_mcp/v1/events` is an Odoo Bus long-poll route using
+`auth="mcp_event"`. Ticket authentication selects the access assignment's
+unguessable bus channel on the server. The client supplies only its last event
+cursor and cannot add broadcast, group, partner, or arbitrary channels.
 
 Approval state changes and MCP-executed record changes publish:
 

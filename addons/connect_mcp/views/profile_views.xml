@@ -4,7 +4,7 @@
         <field name="name">connect.mcp.profile.list</field>
         <field name="model">connect.mcp.profile</field>
         <field name="arch" type="xml">
-            <list>
+            <tree>
                 <field name="active" widget="boolean_toggle"/>
                 <field name="name"/>
                 <field name="code"/>
@@ -12,7 +12,7 @@
                 <field name="max_records_per_call"/>
                 <field name="rate_limit_per_minute"/>
                 <field name="daily_quota"/>
-            </list>
+            </tree>
         </field>
     </record>
 
@@ -22,7 +22,8 @@
         <field name="arch" type="xml">
             <form>
                 <sheet>
-                    <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active"/>
+                    <widget name="web_ribbon" title="Archived" bg_color="bg-danger"
+                            attrs="{'invisible': [('active', '=', True)]}"/>
                     <div class="oe_title">
                         <label for="name"/>
                         <h1><field name="name" placeholder="Read-only analyst"/></h1>
@@ -71,7 +72,7 @@
                                 denylist always apply.
                             </div>
                             <field name="policy_ids" context="{'default_profile_id': id}">
-                                <list editable="bottom">
+                                <tree editable="bottom">
                                     <field name="active"/>
                                     <field name="model_id"/>
                                     <field name="allow_read"/>
@@ -81,7 +82,7 @@
                                     <field name="allow_unlink"/>
                                     <field name="max_records"/>
                                     <field name="forced_domain_json" optional="hide"/>
-                                </list>
+                                </tree>
                                 <form>
                                     <group>
                                         <field name="active"/>
@@ -112,13 +113,13 @@
                         </page>
                         <page string="Allowed Methods" name="method_policies">
                             <field name="method_policy_ids" context="{'default_profile_id': id}">
-                                <list editable="bottom">
+                                <tree editable="bottom">
                                     <field name="active"/>
                                     <field name="model_id"/>
                                     <field name="method_name"/>
                                     <field name="risk_level"/>
                                     <field name="max_record_count"/>
-                                </list>
+                                </tree>
                                 <form>
                                     <group>
                                         <field name="profile_id"/>
@@ -137,12 +138,12 @@
                         </page>
                         <page string="User Access" name="access">
                             <field name="access_ids" readonly="1">
-                                <list>
+                                <tree>
                                     <field name="active"/>
                                     <field name="name"/>
                                     <field name="user_id"/>
                                     <field name="last_used_at"/>
-                                </list>
+                                </tree>
                             </field>
                         </page>
                     </notebook>
@@ -154,7 +155,7 @@
     <record id="action_connect_mcp_profiles" model="ir.actions.act_window">
         <field name="name">Security Profiles</field>
         <field name="res_model">connect.mcp.profile</field>
-        <field name="view_mode">list,form</field>
+        <field name="view_mode">tree,form</field>
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">Create a default-deny MCP security profile</p>
             <p>Add only the business models, operations, and fields that an agent actually needs.</p>

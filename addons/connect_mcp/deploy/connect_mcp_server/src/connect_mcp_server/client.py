@@ -113,7 +113,7 @@ class OdooControlClient:
             limits=httpx.Limits(max_connections=50, max_keepalive_connections=20),
             transport=transport,
             headers={
-                "Content-Type": "application/json",
+                "Content-Type": "application/vnd.connect-mcp+json",
                 "Accept": "application/json",
                 "User-Agent": "connect-mcp-server/2.0",
             },

@@ -13,7 +13,6 @@ authors = [{ name = "Connect MCP Contributors" }]
 dependencies = [
     "fastmcp==4.0.0b3",
     "httpx>=0.28.1,<0.29",
-    "websockets>=17,<18",
 ]
 
 [project.optional-dependencies]

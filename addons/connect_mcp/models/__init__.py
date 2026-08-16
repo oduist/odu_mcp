@@ -3,7 +3,6 @@ from . import approval
 from . import audit
 from . import event_ticket
 from . import ir_http
-from . import ir_websocket
 from . import profile
 from . import res_config_settings
 from . import res_users_apikeys
