@@ -178,6 +178,7 @@ class OdooEventBridge:
                     headers={
                         "Authorization": f"Bearer {ticket.token}",
                         "Accept": "application/json",
+                        "Content-Type": "application/vnd.connect-mcp+json",
                         "User-Agent": "connect-mcp-server/2.0",
                     },
                     json={"last": last},

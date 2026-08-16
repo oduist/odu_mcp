@@ -78,6 +78,10 @@ the sidecar's token-verification endpoint.
 }
 ```
 
+On Odoo 15, POST bodies use the vendor media type
+`application/vnd.connect-mcp+json` so the routes remain raw HTTP endpoints
+rather than being captured by Odoo's JSON-RPC dispatcher.
+
 Responses use a common envelope:
 
 ```json

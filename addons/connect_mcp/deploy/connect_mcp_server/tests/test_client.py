@@ -97,6 +97,7 @@ async def test_user_errors_and_large_responses_do_not_open_breaker() -> None:
     response_status = 403
 
     def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Content-Type"] == "application/vnd.connect-mcp+json"
         if response_status == 403:
             return httpx.Response(
                 403,

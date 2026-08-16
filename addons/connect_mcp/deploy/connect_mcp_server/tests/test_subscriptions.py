@@ -122,6 +122,7 @@ async def test_event_watcher_mints_one_ticket_clears_key_and_stops_at_expiry() -
 
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["Authorization"] == "Bearer event-ticket"
+        assert request.headers["Content-Type"] == "application/vnd.connect-mcp+json"
         poll_ready.set()
         await asyncio.sleep(0.01)
         return httpx.Response(
