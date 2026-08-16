@@ -6,37 +6,62 @@
         <field name="inherit_id" ref="base.res_config_settings_view_form"/>
         <field name="priority" eval="90"/>
         <field name="arch" type="xml">
-            <xpath expr="//form" position="inside">
-                <app data-string="Connect MCP"
-                     string="Connect MCP"
-                     name="connect_mcp"
+            <xpath expr="//div[hasclass('settings')]" position="inside">
+                <div class="app_settings_block" data-string="Connect MCP"
+                     string="Connect MCP" data-key="connect_mcp"
                      groups="base.group_system">
-                    <block title="Connector API" name="mcp_connector_api">
-                        <setting id="mcp_enabled"
-                                 string="Enable connector API"
-                                 help="Disable all authenticated MCP operations without deleting user access assignments.">
-                            <field name="connect_mcp_enabled"/>
-                        </setting>
-                        <setting id="mcp_payload_limit"
-                                 string="Request and response limit"
-                                 help="Maximum JSON request and response size in bytes.">
-                            <field name="connect_mcp_max_payload_bytes"/>
-                        </setting>
-                        <setting id="mcp_binary_limit"
-                                 string="Binary and report limit"
-                                 help="Maximum decoded attachment or rendered report size in bytes.">
-                            <field name="connect_mcp_max_binary_bytes"/>
-                        </setting>
-                    </block>
-                    <block title="Retention" name="mcp_retention">
-                        <setting id="mcp_audit_retention" string="Audit retention">
-                            <field name="connect_mcp_audit_retention_days"/>
-                        </setting>
-                        <setting id="mcp_approval_retention" string="Approval retention">
-                            <field name="connect_mcp_approval_retention_days"/>
-                        </setting>
-                    </block>
-                </app>
+                    <h2>Connector API</h2>
+                    <div class="row mt16 o_settings_container">
+                        <div class="col-12 col-lg-6 o_setting_box">
+                            <div class="o_setting_left_pane">
+                                <field name="connect_mcp_enabled"/>
+                            </div>
+                            <div class="o_setting_right_pane">
+                                <label for="connect_mcp_enabled"/>
+                                <div class="text-muted">
+                                    Disable all authenticated MCP operations without deleting user access assignments.
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-lg-6 o_setting_box">
+                            <div class="o_setting_right_pane">
+                                <label for="connect_mcp_max_payload_bytes"/>
+                                <div class="text-muted">Maximum JSON request and response size in bytes.</div>
+                                <div class="content-group">
+                                    <field name="connect_mcp_max_payload_bytes"/>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-lg-6 o_setting_box">
+                            <div class="o_setting_right_pane">
+                                <label for="connect_mcp_max_binary_bytes"/>
+                                <div class="text-muted">Maximum decoded attachment or rendered report size in bytes.</div>
+                                <div class="content-group">
+                                    <field name="connect_mcp_max_binary_bytes"/>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <h2>Retention</h2>
+                    <div class="row mt16 o_settings_container">
+                        <div class="col-12 col-lg-6 o_setting_box">
+                            <div class="o_setting_right_pane">
+                                <label for="connect_mcp_audit_retention_days"/>
+                                <div class="content-group">
+                                    <field name="connect_mcp_audit_retention_days"/>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-lg-6 o_setting_box">
+                            <div class="o_setting_right_pane">
+                                <label for="connect_mcp_approval_retention_days"/>
+                                <div class="content-group">
+                                    <field name="connect_mcp_approval_retention_days"/>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </xpath>
         </field>
     </record>

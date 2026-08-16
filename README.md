@@ -1,6 +1,6 @@
 # Connect MCP
 
-Connect MCP connects MCP clients to Odoo 19 while keeping authorization, policy,
+Connect MCP connects MCP clients to Odoo 15 while keeping authorization, policy,
 approval, and audit decisions inside Odoo.
 
 The project has two deliberately separate components:
@@ -53,11 +53,11 @@ sidecar-issued client token, or direct database access.
   transport-only circuit breaker, and one-operation-at-a-time enforcement per
   Odoo user.
 - MCP `subscriptions/listen` updates for approval and MCP-executed record
-  resources, backed by Odoo Bus WebSocket events and short-lived event tickets.
+  resources, backed by Odoo Bus long polling and short-lived event tickets.
 
 ## Installation
 
-Install the addon on a fresh Odoo 19 database:
+Install the addon on a fresh Odoo 15 database:
 
 ```bash
 odoo \
@@ -85,8 +85,8 @@ then creates an API key in their own profile and selects **MCP only**. Configure
 that key as the bearer token in their MCP client.
 
 Odoo subscriptions require the standard Odoo evented worker and reverse-proxy
-support for `/connect_mcp/v1/events`, just as Odoo's normal `/websocket` endpoint
-does.
+support for `/connect_mcp/v1/events`, just as Odoo's normal `/longpolling/poll`
+endpoint does.
 
 ## Development
 

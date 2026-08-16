@@ -37,13 +37,13 @@ API health endpoint without using a user key.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `CONNECT_MCP_ODOO_URL` | required | Odoo base HTTP(S) URL used for authentication and control API calls |
-| `CONNECT_MCP_EVENTS_URL` | derived from Odoo URL | Optional explicit WS(S) URL for a separately routed evented/gevent upstream |
+| `CONNECT_MCP_EVENTS_URL` | derived from Odoo URL | Optional explicit HTTP(S) URL for a separately routed evented/gevent upstream |
 | `CONNECT_MCP_HOST` | `127.0.0.1` | HTTP bind address |
 | `CONNECT_MCP_PORT` | `8000` | HTTP bind port |
 | `CONNECT_MCP_MCP_PATH` | `/mcp` | Streamable HTTP path |
 | `CONNECT_MCP_TOOL_GROUPS` | `core` | Comma-separated optional tool groups |
 | `CONNECT_MCP_REQUEST_TIMEOUT_SECONDS` | `30` | Odoo request timeout |
-| `CONNECT_MCP_VERIFY_TLS` | `true` | Verify Odoo HTTPS and WSS certificates |
+| `CONNECT_MCP_VERIFY_TLS` | `true` | Verify Odoo HTTPS certificates |
 | `CONNECT_MCP_MAX_RESPONSE_BYTES` | `10485760` | Maximum buffered Odoo response |
 | `CONNECT_MCP_IDENTITY_CACHE_SECONDS` | `10` | Short successful identity-cache lifetime |
 | `CONNECT_MCP_QUEUE_SCOPE` | `user` | FIFO queue scope: `user` or one shared `global` queue |
@@ -53,11 +53,11 @@ API health endpoint without using a user key.
 | `CONNECT_MCP_CIRCUIT_FAILURE_THRESHOLD` | `5` | Transport/gateway failures before opening |
 | `CONNECT_MCP_CIRCUIT_RESET_SECONDS` | `30` | Delay before one half-open probe |
 | `CONNECT_MCP_EVENTS_ENABLED` | `true` | Enable Odoo Bus to MCP subscription bridging |
-| `CONNECT_MCP_EVENT_REFRESH_SECONDS` | `240` | Maximum lifetime of one Odoo WebSocket connection |
+| `CONNECT_MCP_EVENT_REFRESH_SECONDS` | `240` | Maximum duration of one Odoo event long-poll request |
 
 When `CONNECT_MCP_EVENTS_URL` is unset, the sidecar derives
-`wss://<CONNECT_MCP_ODOO_URL host>/connect_mcp/v1/events`. A reverse proxy must send
-both `/websocket` and `/connect_mcp/v1/events` to Odoo's evented/gevent port.
+`https://<CONNECT_MCP_ODOO_URL host>/connect_mcp/v1/events`. A reverse proxy must
+send both `/longpolling` and `/connect_mcp/v1/events` to Odoo's evented/gevent port.
 See `nginx.edge.example.conf` for a unified Odoo and MCP edge configuration.
 
 The circuit breaker counts only network failures and HTTP 502/503/504. User
@@ -94,7 +94,7 @@ mutation request itself.
 
 After bearer validation, the sidecar mints a short-lived, events-only ticket.
 It uses that ticket on `/connect_mcp/v1/events`; the raw API key is not retained by
-the watcher. Odoo restricts the WebSocket session to one unguessable channel
+the watcher. Odoo restricts every long-poll request to one unguessable channel
 for that access assignment. The ticket has an absolute expiry and is never
 renewed without another authenticated MCP request. The sidecar also uses a
 separate in-process subscription bus per Odoo subject, so one subject's event

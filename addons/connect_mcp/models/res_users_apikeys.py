@@ -42,10 +42,6 @@ class ResUsersApikeys(models.Model):
              WHERE users.active
                AND api_key.scope = 'mcp'
                AND api_key.index = %s
-               AND (
-                    api_key.expiration_date IS NULL
-                    OR api_key.expiration_date >= now() AT TIME ZONE 'utc'
-               )
             """,
             [key[:INDEX_SIZE]],
         )
@@ -54,6 +50,6 @@ class ResUsersApikeys(models.Model):
                 return user_id
         return False
 
-    def _generate(self, scope, name, expiration_date):
+    def _generate(self, scope, name):
         scope = scope or self.env.context.get("connect_mcp_api_key_scope")
-        return super()._generate(scope, name, expiration_date)
+        return super()._generate(scope, name)

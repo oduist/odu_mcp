@@ -1,6 +1,6 @@
 # Odoo Addons
 
-`connect_mcp` is the Odoo 19 control plane for the HTTP FastMCP sidecar.
+`connect_mcp` is the Odoo 15 control plane for the HTTP FastMCP sidecar.
 
 Install it only on a fresh database. This version deliberately refuses to load
 if the removed legacy credential schema is detected.
@@ -14,4 +14,4 @@ After installation:
 4. Configure the key as the bearer token in the user's MCP client.
 
 For subscriptions, route `/connect_mcp/v1/events` to Odoo's evented worker in the
-same way as the standard Odoo `/websocket` endpoint.
+same way as the standard Odoo `/longpolling/poll` endpoint.

@@ -18,12 +18,13 @@ class ConnectMcpEventTicket(models.Model):
         index=True,
     )
     expires_at = fields.Datetime(required=True, readonly=True, index=True)
-    last_used_at = fields.Datetime(readonly=True)
-
-    _token_hash_unique = models.Constraint(
-        "UNIQUE(token_hash)",
-        "The MCP event ticket must be unique.",
-    )
+    _sql_constraints = [
+        (
+            "token_hash_unique",
+            "UNIQUE(token_hash)",
+            "The MCP event ticket must be unique.",
+        ),
+    ]
 
     @api.model
     def _ttl_seconds(self):
@@ -61,7 +62,6 @@ class ConnectMcpEventTicket(models.Model):
         access = ticket.access_id
         if not ticket or not access.active or not access.profile_id.active or not access.user_id.active:
             return self.browse()
-        ticket.write({"last_used_at": now})
         return ticket
 
     @staticmethod

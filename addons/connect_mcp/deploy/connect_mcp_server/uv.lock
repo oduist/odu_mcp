@@ -198,6 +198,38 @@ wheels = [
 ]
 
 [[package]]
+name = "connect-mcp-server"
+version = "1.0.0"
+source = { editable = "." }
+dependencies = [
+    { name = "fastmcp" },
+    { name = "httpx" },
+]
+
+[package.optional-dependencies]
+test = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "respx" },
+    { name = "ruff" },
+    { name = "uvicorn" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastmcp", specifier = "==4.0.0b3" },
+    { name = "httpx", specifier = ">=0.28.1,<0.29" },
+    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.4,<9" },
+    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=1.1,<2" },
+    { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6.2,<7" },
+    { name = "respx", marker = "extra == 'test'", specifier = ">=0.22,<0.23" },
+    { name = "ruff", marker = "extra == 'test'", specifier = ">=0.12,<1" },
+    { name = "uvicorn", marker = "extra == 'test'", specifier = ">=0.35,<1" },
+]
+provides-extras = ["test"]
+
+[[package]]
 name = "coverage"
 version = "7.15.2"
 source = { registry = "https://pypi.org/simple" }
@@ -729,40 +761,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/de/1d/f4da6f02cdffe04d6
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e8/3d/1087453384dbde46a8c7f9356eead2c58be8a7bf156bca40243377c85715/more_itertools-11.1.0-py3-none-any.whl", hash = "sha256:4b65538ae22f6fed0ce4874efd317463a7489796a0939fa66824dd542125a192", size = 72226, upload-time = "2026-05-22T14:14:28.824Z" },
 ]
-
-[[package]]
-name = "connect-mcp-server"
-version = "1.0.0"
-source = { editable = "." }
-dependencies = [
-    { name = "fastmcp" },
-    { name = "httpx" },
-    { name = "websockets" },
-]
-
-[package.optional-dependencies]
-test = [
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "respx" },
-    { name = "ruff" },
-    { name = "uvicorn" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "fastmcp", specifier = "==4.0.0b3" },
-    { name = "httpx", specifier = ">=0.28.1,<0.29" },
-    { name = "pytest", marker = "extra == 'test'", specifier = ">=8.4,<9" },
-    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=1.1,<2" },
-    { name = "pytest-cov", marker = "extra == 'test'", specifier = ">=6.2,<7" },
-    { name = "respx", marker = "extra == 'test'", specifier = ">=0.22,<0.23" },
-    { name = "ruff", marker = "extra == 'test'", specifier = ">=0.12,<1" },
-    { name = "uvicorn", marker = "extra == 'test'", specifier = ">=0.35,<1" },
-    { name = "websockets", specifier = ">=17,<18" },
-]
-provides-extras = ["test"]
 
 [[package]]
 name = "openapi-pydantic"

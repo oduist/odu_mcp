@@ -83,8 +83,8 @@ the subject:
 
 1. It uses the raw key once to mint an Odoo event ticket.
 2. It clears its raw-key reference.
-3. It opens Odoo's event WebSocket with the event-only ticket.
-4. It bounds every WebSocket connection by the configured refresh interval.
+3. It polls Odoo's event endpoint with the event-only ticket and last event cursor.
+4. It bounds every long-poll request by the configured refresh interval.
 5. It stops when the ticket reaches its absolute expiry; a later authenticated
    MCP request may create a watcher with a new ticket.
 6. It validates and deduplicates `(subject, URI, version)` events.

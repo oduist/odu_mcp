@@ -21,16 +21,15 @@ class ConnectMcpController(http.Controller):
         methods=["GET"],
         csrf=False,
         save_session=False,
-        readonly=True,
     )
     def health(self):
-        return request.make_json_response(
+        return self._json_response(
             {
                 "status": "ok",
                 "service": "connect_mcp",
                 "api_version": "v1",
             },
-            headers=SECURITY_HEADERS,
+            200,
         )
 
     @http.route(
@@ -40,7 +39,6 @@ class ConnectMcpController(http.Controller):
         methods=["GET"],
         csrf=False,
         save_session=False,
-        readonly=True,
     )
     def identity(self):
         request_id = self._request_id()
@@ -172,7 +170,7 @@ class ConnectMcpController(http.Controller):
         if response:
             return response
         try:
-            payload = request.get_json_data()
+            payload = json.loads(request.httprequest.get_data(as_text=True))
         except Exception:  # noqa: BLE001 - malformed protocol input
             return self._error(request_id, "invalid_json", "The request body is not valid JSON.", 400)
         if not isinstance(payload, dict):
@@ -244,7 +242,7 @@ class ConnectMcpController(http.Controller):
         *,
         retryable=False,
     ):
-        return request.make_json_response(
+        return self._json_response(
             {
                 "ok": False,
                 "request_id": request_id,
@@ -254,9 +252,16 @@ class ConnectMcpController(http.Controller):
                     "retryable": retryable,
                 },
             },
-            headers=SECURITY_HEADERS,
-            status=status,
+            status,
         )
 
     def _response(self, body, status):
-        return request.make_json_response(body, headers=SECURITY_HEADERS, status=status)
+        return self._json_response(body, status)
+
+    def _json_response(self, body, status):
+        response = request.make_response(
+            json.dumps(body, ensure_ascii=False, default=str),
+            headers=[("Content-Type", "application/json; charset=utf-8"), *SECURITY_HEADERS],
+        )
+        response.status_code = status
+        return response

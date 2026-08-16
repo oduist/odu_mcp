@@ -4,7 +4,7 @@
         <field name="name">connect.mcp.approval.list</field>
         <field name="model">connect.mcp.approval</field>
         <field name="arch" type="xml">
-            <list create="0" edit="0" delete="0"
+            <tree create="0" edit="0" delete="0"
                   decoration-warning="state == 'pending'"
                   decoration-success="state == 'executed'"
                   decoration-danger="state in ('rejected', 'failed', 'expired')">
@@ -17,7 +17,7 @@
                 <field name="model_name"/>
                 <field name="target_count"/>
                 <field name="expires_at"/>
-            </list>
+            </tree>
         </field>
     </record>
 
@@ -32,14 +32,14 @@
                             string="Approve"
                             class="btn-primary"
                             confirm="Approve this exact change plan?"
-                            invisible="state != 'pending'"
+                            attrs="{'invisible': [('state', '!=', 'pending')]}"
                             groups="connect_mcp.group_mcp_manager"/>
                     <button name="action_reject"
                             type="object"
                             string="Reject"
                             class="btn-secondary"
                             confirm="Reject this change plan?"
-                            invisible="state not in ('pending', 'approved')"
+                            attrs="{'invisible': [('state', 'not in', ('pending', 'approved'))]}"
                             groups="connect_mcp.group_mcp_manager"/>
                     <field name="state" widget="statusbar"
                            statusbar_visible="pending,approved,executing,executed,rejected,expired,failed"/>
@@ -107,7 +107,7 @@
     <record id="action_connect_mcp_approvals" model="ir.actions.act_window">
         <field name="name">Approval Inbox</field>
         <field name="res_model">connect.mcp.approval</field>
-        <field name="view_mode">list,form</field>
+        <field name="view_mode">tree,form</field>
         <field name="search_view_id" ref="view_connect_mcp_approval_search"/>
         <field name="context">{'search_default_pending': 1}</field>
     </record>

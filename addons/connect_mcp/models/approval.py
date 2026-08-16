@@ -73,20 +73,33 @@ class ConnectMcpApproval(models.Model):
     result_json = fields.Text(readonly=True)
     error_message = fields.Text(readonly=True)
 
-    _request_uid_unique = models.Constraint(
-        "UNIQUE(request_uid)",
-        "The approval request identifier must be unique.",
-    )
-    _idempotency_unique = models.Constraint(
-        "UNIQUE(access_id, idempotency_key)",
-        "The idempotency key has already been used by this MCP access assignment.",
-    )
+    _sql_constraints = [
+        (
+            "request_uid_unique",
+            "UNIQUE(request_uid)",
+            "The approval request identifier must be unique.",
+        ),
+        (
+            "idempotency_unique",
+            "UNIQUE(access_id, idempotency_key)",
+            "The idempotency key has already been used by this MCP access assignment.",
+        ),
+    ]
+
+    def _lock_for_update(self):
+        self.ensure_one()
+        self.env.cr.execute(
+            "SELECT id FROM connect_mcp_approval WHERE id = %s FOR UPDATE",
+            [self.id],
+        )
+        self.invalidate_cache()
+        return self
 
     def action_approve(self):
         if not self.env.user._has_group("connect_mcp.group_mcp_manager"):
             raise AccessError(_("Only MCP managers can approve change plans."))
         for approval in self:
-            approval.lock_for_update()
+            approval._lock_for_update()
             if approval.state != "pending":
                 raise UserError(_("Only pending plans can be approved."))
             if approval.expires_at <= fields.Datetime.now():
@@ -104,7 +117,7 @@ class ConnectMcpApproval(models.Model):
         if not self.env.user._has_group("connect_mcp.group_mcp_manager"):
             raise AccessError(_("Only MCP managers can reject change plans."))
         for approval in self:
-            approval.lock_for_update()
+            approval._lock_for_update()
             if approval.state not in {"pending", "approved"}:
                 raise UserError(_("Only pending or approved plans can be rejected."))
             approval._system_write(

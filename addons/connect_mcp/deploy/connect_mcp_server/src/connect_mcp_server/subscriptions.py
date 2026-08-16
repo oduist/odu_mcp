@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import ssl
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -18,8 +17,6 @@ from fastmcp.server.auth import AccessToken
 from fastmcp.server.dependencies import get_access_token
 from mcp.server.subscriptions import InMemorySubscriptionBus, ListenHandler
 from mcp.shared.subscriptions import ResourceUpdated
-from websockets.asyncio.client import connect
-from websockets.exceptions import InvalidStatus, WebSocketException
 
 from .config import Settings
 
@@ -158,9 +155,6 @@ class OdooEventBridge:
             LOGGER.warning("Odoo event watcher stopped for %s: %s", subject, error)
 
     async def _watch(self, subject: str, bearer_token: str) -> None:
-        websocket_url = self._websocket_url()
-        origin = self._origin()
-        ssl_context = self._ssl_context(websocket_url)
         try:
             ticket = await self._mint_ticket(bearer_token)
         except asyncio.CancelledError:
@@ -175,46 +169,49 @@ class OdooEventBridge:
         finally:
             del bearer_token
 
+        last = 0
         while not self._closed and (remaining := ticket.expires_at - time.monotonic()) > 0:
             try:
-                connection_lifetime = min(self.settings.event_refresh_seconds, remaining)
-                async with asyncio.timeout(connection_lifetime):
-                    async with connect(
-                        websocket_url,
-                        origin=origin,
-                        additional_headers={"Authorization": f"Bearer {ticket.token}"},
-                        user_agent_header=None,
-                        proxy=None,
-                        ssl=ssl_context,
-                        open_timeout=min(
-                            10.0,
-                            self.settings.request_timeout_seconds,
-                            connection_lifetime,
-                        ),
-                        max_size=1024 * 1024,
-                    ) as websocket:
-                        await websocket.send(
-                            json.dumps(
-                                {
-                                    "event_name": "subscribe",
-                                    "data": {"channels": [], "last": 0},
-                                }
-                            )
-                        )
-                        while not self._closed:
-                            message = await websocket.recv()
-                            await self._handle_message(subject, message)
-            except TimeoutError:
-                pass
+                poll_lifetime = min(self.settings.event_refresh_seconds, remaining)
+                response = await self._client.post(
+                    self._events_url(),
+                    headers={
+                        "Authorization": f"Bearer {ticket.token}",
+                        "Accept": "application/json",
+                        "User-Agent": "connect-mcp-server/2.0",
+                    },
+                    json={"last": last},
+                    timeout=httpx.Timeout(
+                        poll_lifetime,
+                        connect=min(10.0, poll_lifetime),
+                        pool=min(10.0, poll_lifetime),
+                    ),
+                )
+                response.raise_for_status()
+                envelope: Any = response.json()
+                notifications = (
+                    envelope.get("notifications") if isinstance(envelope, dict) else None
+                )
+                next_last = envelope.get("last") if isinstance(envelope, dict) else None
+                if not isinstance(notifications, list):
+                    raise ValueError("Odoo returned invalid event notifications")
+                if (
+                    not isinstance(next_last, int)
+                    or isinstance(next_last, bool)
+                    or next_last < last
+                ):
+                    raise ValueError("Odoo returned an invalid event cursor")
+                last = next_last
+                await self._handle_message(subject, json.dumps(notifications))
             except asyncio.CancelledError:
                 raise
-            except InvalidStatus as exc:
+            except httpx.HTTPStatusError as exc:
                 if exc.response.status_code in {401, 403}:
                     return
-                LOGGER.info("Odoo event WebSocket reconnect for %s: %s", subject, exc)
+                LOGGER.info("Odoo event long-poll reconnect for %s: %s", subject, exc)
                 await asyncio.sleep(min(1.0, max(0.0, ticket.expires_at - time.monotonic())))
-            except (OSError, WebSocketException) as exc:
-                LOGGER.info("Odoo event WebSocket reconnect for %s: %s", subject, exc)
+            except (httpx.HTTPError, ValueError) as exc:
+                LOGGER.info("Odoo event long-poll reconnect for %s: %s", subject, exc)
                 await asyncio.sleep(min(1.0, max(0.0, ticket.expires_at - time.monotonic())))
 
     async def _mint_ticket(self, bearer_token: str) -> EventTicket:
@@ -267,26 +264,11 @@ class OdooEventBridge:
             self._versions[key] = version
             await self.publisher.publish(subject, uri)
 
-    def _websocket_url(self) -> str:
+    def _events_url(self) -> str:
         if self.settings.events_url:
             return self.settings.events_url
         parsed = urlparse(self.settings.odoo_url)
-        scheme = "wss" if parsed.scheme == "https" else "ws"
-        return urlunparse((scheme, parsed.netloc, "/connect_mcp/v1/events", "", "", ""))
-
-    def _origin(self) -> str:
-        parsed = urlparse(self._websocket_url())
-        scheme = "https" if parsed.scheme == "wss" else "http"
-        return urlunparse((scheme, parsed.netloc, "", "", "", ""))
-
-    def _ssl_context(self, websocket_url: str) -> ssl.SSLContext | None:
-        if not websocket_url.startswith("wss://"):
-            return None
-        context = ssl.create_default_context()
-        if not self.settings.verify_tls:
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE  # noqa: S501 - explicit operator setting
-        return context
+        return urlunparse((parsed.scheme, parsed.netloc, "/connect_mcp/v1/events", "", "", ""))
 
     async def aclose(self) -> None:
         self._closed = True

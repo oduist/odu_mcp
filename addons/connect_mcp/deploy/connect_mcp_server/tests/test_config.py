@@ -27,7 +27,9 @@ def _base_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_from_env_builds_http_only_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     _base_env(monkeypatch)
-    monkeypatch.setenv("CONNECT_MCP_EVENTS_URL", "wss://events.example.test/connect_mcp/v1/events")
+    monkeypatch.setenv(
+        "CONNECT_MCP_EVENTS_URL", "https://events.example.test/connect_mcp/v1/events"
+    )
     monkeypatch.setenv("CONNECT_MCP_TOOL_GROUPS", "write,sales")
     monkeypatch.setenv("CONNECT_MCP_EVENTS_ENABLED", "false")
     monkeypatch.setenv("CONNECT_MCP_QUEUE_SCOPE", "global")
@@ -37,7 +39,7 @@ def test_from_env_builds_http_only_settings(monkeypatch: pytest.MonkeyPatch) -> 
     settings = Settings.from_env()
 
     assert settings.tool_groups == frozenset({"core", "write", "sales"})
-    assert settings.events_url == "wss://events.example.test/connect_mcp/v1/events"
+    assert settings.events_url == "https://events.example.test/connect_mcp/v1/events"
     assert settings.events_enabled is False
     assert settings.queue_scope == "global"
     assert settings.queue_timeout_seconds == 120
@@ -52,13 +54,13 @@ def test_rejects_non_http_odoo_url() -> None:
         settings.validate()
 
 
-def test_rejects_non_websocket_events_url() -> None:
+def test_rejects_non_http_events_url() -> None:
     settings = Settings(
         odoo_url="https://odoo.example.test",
-        events_url="https://odoo.example.test/connect_mcp/v1/events",
+        events_url="wss://odoo.example.test/connect_mcp/v1/events",
     )
 
-    with pytest.raises(ConfigurationError, match="absolute WS"):
+    with pytest.raises(ConfigurationError, match="absolute HTTP"):
         settings.validate()
 
 

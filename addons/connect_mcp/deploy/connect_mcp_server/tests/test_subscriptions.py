@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import ssl
 import time
-from contextlib import asynccontextmanager
 
 import httpx
 import pytest
@@ -26,15 +24,14 @@ def _settings(**overrides: object) -> Settings:
 
 
 @pytest.mark.asyncio
-async def test_event_bridge_uses_explicit_websocket_endpoint_and_matching_origin() -> None:
+async def test_event_bridge_uses_explicit_longpoll_endpoint() -> None:
     bridge = OdooEventBridge(
-        _settings(events_url="ws://odoo-evented:8072/connect_mcp/v1/events"),
+        _settings(events_url="http://odoo-evented:8072/connect_mcp/v1/events"),
         SubscriptionPublisher(),
     )
 
     try:
-        assert bridge._websocket_url() == "ws://odoo-evented:8072/connect_mcp/v1/events"
-        assert bridge._origin() == "http://odoo-evented:8072"
+        assert bridge._events_url() == "http://odoo-evented:8072/connect_mcp/v1/events"
     finally:
         await bridge.aclose()
 
@@ -119,34 +116,34 @@ async def test_event_bridge_mints_ticket_and_filters_deduplicated_events() -> No
 
 
 @pytest.mark.asyncio
-async def test_event_watcher_mints_one_ticket_clears_key_and_stops_at_expiry(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    bridge = OdooEventBridge(_settings(), SubscriptionPublisher())
+async def test_event_watcher_mints_one_ticket_clears_key_and_stops_at_expiry() -> None:
     minted_with: list[str] = []
-    websocket_ready = asyncio.Event()
+    poll_ready = asyncio.Event()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == "Bearer event-ticket"
+        poll_ready.set()
+        await asyncio.sleep(0.01)
+        return httpx.Response(
+            200,
+            json={"notifications": [], "last": 0},
+            request=request,
+        )
+
+    bridge = OdooEventBridge(
+        _settings(),
+        SubscriptionPublisher(),
+        transport=httpx.MockTransport(handler),
+    )
 
     async def mint_ticket(bearer_token: str):
         minted_with.append(bearer_token)
         return EventTicket(token="event-ticket", expires_at=time.monotonic() + 0.2)
 
-    class FakeWebSocket:
-        async def send(self, _message: str) -> None:
-            websocket_ready.set()
-
-        async def recv(self) -> str:
-            await asyncio.Event().wait()
-            raise AssertionError("unreachable")
-
-    @asynccontextmanager
-    async def fake_connect(*_args, **_kwargs):
-        yield FakeWebSocket()
-
-    monkeypatch.setattr("connect_mcp_server.subscriptions.connect", fake_connect)
     bridge._mint_ticket = mint_ticket  # type: ignore[method-assign]
     task = asyncio.create_task(bridge._watch("odoo:prod:7", "odoo-key"))
     try:
-        await asyncio.wait_for(websocket_ready.wait(), timeout=1)
+        await asyncio.wait_for(poll_ready.wait(), timeout=1)
         frame = task.get_coro().cr_frame
         assert frame is not None
         assert "bearer_token" not in frame.f_locals
@@ -365,7 +362,7 @@ async def test_event_message_parser_ignores_malformed_or_untrusted_notifications
 
 
 @pytest.mark.asyncio
-async def test_event_bridge_derives_urls_and_tls_policy() -> None:
+async def test_event_bridge_derives_longpoll_url() -> None:
     insecure = OdooEventBridge(
         _settings(odoo_url="https://odoo.example.test/base", verify_tls=False),
         SubscriptionPublisher(),
@@ -375,14 +372,8 @@ async def test_event_bridge_derives_urls_and_tls_policy() -> None:
         SubscriptionPublisher(),
     )
     try:
-        assert insecure._websocket_url() == "wss://odoo.example.test/connect_mcp/v1/events"
-        assert insecure._origin() == "https://odoo.example.test"
-        context = insecure._ssl_context(insecure._websocket_url())
-        assert context is not None
-        assert context.check_hostname is False
-        assert context.verify_mode == ssl.CERT_NONE
-        assert plain._websocket_url() == "ws://odoo.example.test/connect_mcp/v1/events"
-        assert plain._ssl_context(plain._websocket_url()) is None
+        assert insecure._events_url() == "https://odoo.example.test/connect_mcp/v1/events"
+        assert plain._events_url() == "http://odoo.example.test/connect_mcp/v1/events"
     finally:
         await insecure.aclose()
         await plain.aclose()
